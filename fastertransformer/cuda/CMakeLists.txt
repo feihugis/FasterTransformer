@@ -30,6 +30,10 @@ set(topk_kernel_files
   topk_kernels.cu
 )
 
+set(topk_kernel_v2_files
+  topk_kernels_v2.cu
+)
+
 set(decoding_kernel_files
   decoding_kernels.cu
 )
@@ -75,6 +79,21 @@ add_library(topk STATIC ${topk_kernel_files})
 set_property(TARGET topk PROPERTY POSITION_INDEPENDENT_CODE  ON)
 set_property(TARGET topk PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
 target_link_libraries(topk PUBLIC -lcublas -lcudart -lcurand)
+
+add_library(topk_shared SHARED ${topk_kernel_files})
+set_property(TARGET topk_shared PROPERTY POSITION_INDEPENDENT_CODE  ON)
+set_property(TARGET topk_shared PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+target_link_libraries(topk_shared PUBLIC -lcublas -lcudart -lcurand)
+
+add_library(topk_v2 STATIC ${topk_kernel_v2_files})
+set_property(TARGET topk_v2 PROPERTY POSITION_INDEPENDENT_CODE  ON)
+set_property(TARGET topk_v2 PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+target_link_libraries(topk_v2 PUBLIC -lcublas -lcudart -lcurand)
+
+add_library(topk_shared_v2 SHARED ${topk_kernel_v2_files})
+set_property(TARGET topk_shared_v2 PROPERTY POSITION_INDEPENDENT_CODE  ON)
+set_property(TARGET topk_shared_v2 PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+target_link_libraries(topk_shared_v2 PUBLIC -lcublas -lcudart -lcurand)
 
 add_library(decoding STATIC ${decoding_kernel_files})
 set_property(TARGET decoding PROPERTY POSITION_INDEPENDENT_CODE  ON)

@@ -21,7 +21,11 @@
 #include "fastertransformer/th_op/decoder.h"
 #include "fastertransformer/th_op/decoding.h"
 #include "fastertransformer/th_op/gpt.h"
+#include "fastertransformer/th_op/topk.h"
 #include "fastertransformer/th_op/weight_quantize_op.h"
+
+#include "fastertransformer/cuda/topk_kernels.cuh"
+#include "fastertransformer/cuda/topk_kernels_v2.cuh"
 
 using torch::Tensor;
 
@@ -149,3 +153,9 @@ static auto gather_tree =
 
 static auto weight_quantize =
   torch::RegisterOperators("fastertransformer::weight_quantize", &torch_ext::weight_quantize);
+
+static auto topk =
+  torch::RegisterOperators("fastertransformer::topk", &torch_ext::topK);
+
+static auto topk_v2 =
+  torch::RegisterOperators("fastseq::topk_v2", &torch_ext::topK_v2);

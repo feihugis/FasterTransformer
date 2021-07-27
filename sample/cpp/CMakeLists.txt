@@ -33,6 +33,10 @@ set(decoding_sampling_sample_files
   decoding_sampling_sample.cc
 )
 
+set(topk_sample_files
+  topk_sample.cc
+)
+
 add_executable(encoder_sample ${encoder_sample_files})
 target_link_libraries(encoder_sample PUBLIC -lcublas -lcudart encoder)
 
@@ -50,3 +54,7 @@ endif()
 
 add_executable(decoding_sampling_sample ${decoding_sampling_sample_files})
 target_link_libraries(decoding_sampling_sample PUBLIC -lcublasLt -lcublas -lcudart -lcurand decoder decoding)
+
+
+# add_executable(topk_sample ${topk_sample_files})
+# target_link_libraries(topk_sample PUBLIC -lcublasLt -lcublas -lcudart -lcurand ${TORCH_LIBRARIES} pyt_fastertransformer decoder decoding cuda_kernels)
