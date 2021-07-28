@@ -30,8 +30,12 @@ template <typename T>
 void topK_kernelLauncher(void* workspace,
                          size_t& workspace_size,
                          T* log_probs,
+                         const size_t num_elements,
                          int* ids,
                          T* values,
+                         T* temp_log_probs,
+                         int* topk_tmp_id_buf,
+                         T* topk_tmp_val_buf,
                          const bool* finished,
                          fastertransformer::DecodingBeamsearchArguments args,
                          cudaStream_t stream);

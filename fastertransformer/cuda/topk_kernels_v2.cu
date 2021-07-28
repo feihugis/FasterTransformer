@@ -25,8 +25,12 @@ namespace fastseq {
   template void topK_kernelLauncher<float>(void* workspace,
     size_t& workspace_size,
     float* log_probs,
+    const size_t num_elements,
     int* ids,
     float* values,
+    float* temp_log_probs,
+    int* topk_tmp_id_buf,
+    float* topk_tmp_val_buf,
     const bool* finished,
     DecodingBeamsearchArguments args,
     cudaStream_t stream);
@@ -129,6 +133,7 @@ namespace fastseq {
 template<typename T, int BLOCK_SIZE_, int BLOCKS_PER_BEAM_>
 __global__ void topk_stage_1_opt3(
     const T* __restrict log_probs,
+    const size_t num_elements,
     T* tmp_log_probs,
     int* topk_tmp_id_buf,
     T* topk_tmp_val_buf,
@@ -175,7 +180,10 @@ __global__ void topk_stage_1_opt3(
     for(int elem_id = tid + block_lane * BLOCK_SIZE_; elem_id < vocab_size; elem_id += BLOCK_SIZE_ * BLOCKS_PER_BEAM_)
     {
         int index = elem_id + tmp_log_buf_index;
-        tmp_log_probs[index] = log_probs[index]; 
+        if (index < num_elements) {
+            tmp_log_probs[index] = log_probs[index]; 
+        }
+        
         // printf("+++ tid: %d, bid: %d, row_id: %d, block_lane: %d, index: %d, value: %f\n", tid, bid, row_id, block_lane, index, log_probs[index]);
     }
 
@@ -186,8 +194,11 @@ __global__ void topk_stage_1_opt3(
         for(int elem_id = tid + block_lane * BLOCK_SIZE_; elem_id < vocab_size; elem_id += BLOCK_SIZE_ * BLOCKS_PER_BEAM_)
         {
             int index = elem_id + tmp_log_buf_index;
-            partial.insert(tmp_log_probs[index], index);
-            // printf("+++ tid: %d, bid: %d, row_id: %d, block_lane: %d, index: %d, value: %f\n", tid, bid, row_id, block_lane, index, tmp_log_probs[index]);
+            if (index < num_elements) {
+                partial.insert(tmp_log_probs[index], index);
+                // printf("+++ tid: %d, bid: %d, row_id: %d, block_lane: %d, index: %d, value: %f\n", tid, bid, row_id, block_lane, index, tmp_log_probs[index]);
+            }
+            
         }
 
         TopK_2<T> total = BlockReduce(temp_storage).Reduce(partial, reduce_topk_op_2<T>);
@@ -195,10 +206,12 @@ __global__ void topk_stage_1_opt3(
         if (tid == 0)
         {
             const int index = tmp_topk_buf_index + ite;
-            topk_tmp_id_buf[index] = total.p;
-            topk_tmp_val_buf[index] = total.u;
-            tmp_log_probs[total.p] = -MAX_T_VAL;
-            // printf("+++ Top-%d, tid: %d, bid: %d, row_id: %d, block_lane: %d, index: %d, value: %f\n", ite, tid, bid, row_id, block_lane, total.p, total.u);
+            if (total.p < num_elements) {
+                topk_tmp_id_buf[index] = total.p;
+                topk_tmp_val_buf[index] = total.u;
+                tmp_log_probs[total.p] = -MAX_T_VAL;
+                // printf("+++ Top-%d, tid: %d, bid: %d, row_id: %d, block_lane: %d, index: %d, id: %d, val: %f\n", ite, tid, bid, row_id, block_lane, index, total.p, total.u);
+            }
         }
 
         // printf("+++ tid: %d, bid: %d, row_id: %d, block_lane: %d, index: %d, value: %f\n", tid, bid, row_id, block_lane, total.p, total.u);
@@ -262,6 +275,7 @@ __global__ void topk_stage_2_opt3(
   case K: \
     topk_stage_1_opt3<float, BLOCK_SIZE_1_, BLOCKS_PER_BEAM_><<<batch_size * K * BLOCKS_PER_BEAM_, BLOCK_SIZE_1_, 0, stream>>>( \
         log_probs, \
+        num_elements, \
         temp_log_probs, \
         topk_tmp_id_buf, \
         topk_tmp_val_buf, \
@@ -281,8 +295,12 @@ template <typename T>
 void topK_kernelLauncher(void* workspace,
                          size_t& workspace_size,
                          T* log_probs,
+                         const size_t num_elements,
                          int* ids,
                          T* values,
+                         T* temp_log_probs,
+                         int* topk_tmp_id_buf,
+                         T* topk_tmp_val_buf,
                          const bool* finished,
                          fastertransformer::DecodingBeamsearchArguments args,
                          cudaStream_t stream)
@@ -312,9 +330,9 @@ void topK_kernelLauncher(void* workspace,
     }
     else
     {
-        T* temp_log_probs = (T*)workspace;
-        int* topk_tmp_id_buf = (int*)(temp_log_probs + temp_log_probs_buf_size);
-        T* topk_tmp_val_buf = (T*)(topk_tmp_id_buf + topk_tmp_ids_buf_size);
+        // T* temp_log_probs = (T*)workspace;
+        // int* topk_tmp_id_buf = (int*)(temp_log_probs + temp_log_probs_buf_size);
+        // T* topk_tmp_val_buf = (T*)(topk_tmp_id_buf + topk_tmp_ids_buf_size);
         if(diversity_rate == 0.0f)
         {
             switch(beam_width)

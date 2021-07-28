@@ -6,6 +6,8 @@
 
 #include "fastertransformer/utils/arguments.h"
 
+#include "fastertransformer/utils/allocator.h"
+
 namespace torch_ext {
 using torch::Tensor;
 
@@ -40,12 +42,16 @@ Tensor topK(Tensor input, int64_t K) {
 
 
 std::vector<Tensor> topK_v2(Tensor input, int64_t k) {
+  std::unique_ptr<fastertransformer::Allocator<AllocatorType::CUDA>>
+    allocator(new fastertransformer::Allocator<AllocatorType::CUDA>(input.device(). index()));
+  
+  std::vector<int64_t> input_sizes = input.sizes().vec();
   const int vocab_size = input.size(-1);
   const int batch_size = input.numel() / vocab_size;
 
   int temp_log_probs_buf_size = input.numel();
-  int topk_tmp_ids_buf_size = batch_size * k;
-  int topk_tmp_val_buf_size = batch_size * k;
+  int topk_tmp_ids_buf_size = input_sizes[0] * input_sizes[1] * k * 8;
+  int topk_tmp_val_buf_size = input_sizes[0] * input_sizes[1] * k * 8;
 
   // preventing memory misaligned address
   temp_log_probs_buf_size = (int)(ceil(temp_log_probs_buf_size / 4.)) * 4;
@@ -54,18 +60,27 @@ std::vector<Tensor> topK_v2(Tensor input, int64_t k) {
 
   float* log_probs = input.data_ptr<float>();
 
-  void* topk_workspace = (void *)(log_probs + input.numel() * 4);
-  size_t workspace_size = sizeof(float) * temp_log_probs_buf_size + 
-                          sizeof(int) * topk_tmp_ids_buf_size +
-                          2 * sizeof(float) * topk_tmp_val_buf_size;
-  
-
   std::vector<int64_t> output_sizes = input.sizes().vec();
   output_sizes.back() = k; 
   auto selected_ids = torch::zeros(output_sizes, torch::dtype(torch::kInt32).device(input.device()).requires_grad(false));
   auto selected_probs = torch::zeros(output_sizes, torch::dtype(input.dtype()).device(input.device()).requires_grad(false));
+  auto temp_log_probs = torch::zeros(input_sizes, torch::dtype(input.dtype()).device(input.device()).requires_grad(false));
+  auto topk_tmp_id_buf = torch::zeros({input_sizes[0], input_sizes[1], k, 8}, torch::dtype(torch::kInt32).device(input.device()).requires_grad(false));
+  auto topk_tmp_val_buf = torch::zeros({input_sizes[0], input_sizes[1], k, 8}, torch::dtype(input.dtype()).device(input.device()).requires_grad(false));
+  
   int* h_ids = selected_ids.data_ptr<int>();
   float* h_values = selected_probs.data_ptr<float>();
+  float* temp_log_probs_ptr = temp_log_probs.data_ptr<float>();
+  int* topk_tmp_id_buf_ptr = topk_tmp_id_buf.data_ptr<int>();
+  float* topk_tmp_val_buf_ptr = topk_tmp_val_buf.data_ptr<float>();
+
+  void* topk_workspace = (void *)(h_values + selected_probs.numel() * sizeof(float));
+  
+  size_t workspace_size = sizeof(float) * temp_log_probs_buf_size + 
+                          sizeof(int) * topk_tmp_ids_buf_size +
+                          2 * sizeof(float) * topk_tmp_val_buf_size;
+  // void* topk_workspace = reinterpret_cast<void *>(allocator->malloc(workspace_size, false));
+  // cudaDeviceSynchronize();
   
   DecodingBeamsearchArguments args;
   args.batch_size_ = batch_size;
@@ -83,8 +98,22 @@ std::vector<Tensor> topK_v2(Tensor input, int64_t k) {
 
   cudaStream_t stream;
   check_cuda_error(cudaStreamCreate(&stream));
-  fastseq::topK_kernelLauncher<float>(topk_workspace, workspace_size, log_probs, h_ids, h_values, nullptr, args, stream);
+  fastseq::topK_kernelLauncher<float>(
+    topk_workspace, 
+    workspace_size,
+    log_probs,
+    input.numel(),
+    h_ids,
+    h_values,
+    temp_log_probs_ptr,
+    topk_tmp_id_buf_ptr,
+    topk_tmp_val_buf_ptr,
+    nullptr,
+    args,
+    stream);
   
+  // cudaDeviceSynchronize();
+  // allocator->free(topk_workspace);
   return {selected_probs, selected_ids};
 }
 
