@@ -31,6 +31,7 @@ void topK_kernelLauncher(void* workspace,
                          size_t& workspace_size,
                          T* log_probs,
                          int* ids,
+                         T* values,
                          const bool* finished,
                          fastertransformer::DecodingBeamsearchArguments args,
                          cudaStream_t stream);

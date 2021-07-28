@@ -11,8 +11,8 @@ torch.classes.load_library("build/lib/libpyt_fastertransformer.so")
 
 
 K = 4
-input = torch.rand([32, 2, 8192], device='cuda')
-REPEAT_NUM = 1
+input = torch.rand([3, 2, 8192], device='cuda')
+REPEAT_NUM = 10
 
 
 torch.cuda.synchronize()
@@ -23,18 +23,20 @@ t2 = time.time()
 
 torch.cuda.synchronize()
 t3 = time.time()
-sort_ids = [torch.ops.fastseq.topk_v2(input, K) for _ in range(REPEAT_NUM)]
+value_ids = [torch.ops.fastseq.topk_v2(input, K) for _ in range(REPEAT_NUM)]
 torch.cuda.synchronize()
 t4 = time.time()
 
 torch.cuda.synchronize()
 t5 = time.time()
-value_ids = [torch.topk(input, K) for _ in range(REPEAT_NUM)]
+expected_value_ids = [torch.topk(input, K) for _ in range(REPEAT_NUM)]
 torch.cuda.synchronize()
 t6 = time.time()
 
 print(f"tf-v1, tf-v2, pytorch: {(t2 - t1) / (t6 - t5)}, {(t4 - t3) / (t6 - t5)}; \n")
 
-print(f"expected torch.topk: \n{value_ids[0][0]}, \n{value_ids[0][1]}")
-print(f"result: \n{sort_ids[0]}")
+print(f"expected torch.topk: \n{expected_value_ids[0][0]}, \n{expected_value_ids[0][1]}")
+print(f"result: \n{value_ids[0][0]}, \n{value_ids[0][1]}")
+assert (expected_value_ids[0][0] == value_ids[0][0]).all()
+assert (expected_value_ids[0][1] == value_ids[0][1]).all()
 # print(input)

@@ -26,6 +26,7 @@ namespace fastseq {
     size_t& workspace_size,
     float* log_probs,
     int* ids,
+    float* values,
     const bool* finished,
     DecodingBeamsearchArguments args,
     cudaStream_t stream);
@@ -207,9 +208,11 @@ __global__ void topk_stage_1_opt3(
 
 template<typename T, int BLOCK_SIZE_, int BLOCKS_PER_BEAM_>
 __global__ void topk_stage_2_opt3(
+    const T* __restrict log_probs,
     const int* __restrict topk_tmp_id_buf,
     T* topk_tmp_val_buf,
     int* ids,
+    T* values,
     const int k,
     const int vocab_size)
 {
@@ -250,6 +253,7 @@ __global__ void topk_stage_2_opt3(
     }
     if(tid < k) {
       ids[batch_id * k + tid] = topk_tmp_id_buf[batch_id * size + s_id[tid]];
+      values[batch_id * k + tid] = log_probs[ids[batch_id * k + tid]];
       ids[batch_id * k + tid] = ids[batch_id * k + tid] - (ids[batch_id * k + tid] / vocab_size) * vocab_size;
     }
 }
@@ -264,9 +268,11 @@ __global__ void topk_stage_2_opt3(
         finished, \
         beam_width, vocab_size, end_id); \
     topk_stage_2_opt3<float, BLOCK_SIZE_2_, BLOCKS_PER_BEAM_><<<batch_size, BLOCK_SIZE_2_, K * sizeof(int), stream>>>( \
+        log_probs, \
         topk_tmp_id_buf, \
         topk_tmp_val_buf, \
         ids, \
+        values, \
         beam_width, \
         vocab_size); \
   break; \
@@ -276,6 +282,7 @@ void topK_kernelLauncher(void* workspace,
                          size_t& workspace_size,
                          T* log_probs,
                          int* ids,
+                         T* values,
                          const bool* finished,
                          fastertransformer::DecodingBeamsearchArguments args,
                          cudaStream_t stream)

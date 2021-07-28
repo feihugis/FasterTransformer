@@ -39,9 +39,9 @@ Tensor topK(Tensor input, int64_t K) {
 }
 
 
-Tensor topK_v2(Tensor input, int64_t k) {
+std::vector<Tensor> topK_v2(Tensor input, int64_t k) {
   const int vocab_size = input.size(-1);
-  const int batch_size = input.size(0) * input.size(1);
+  const int batch_size = input.numel() / vocab_size;
 
   int temp_log_probs_buf_size = input.numel();
   int topk_tmp_ids_buf_size = batch_size * k;
@@ -59,8 +59,13 @@ Tensor topK_v2(Tensor input, int64_t k) {
                           sizeof(int) * topk_tmp_ids_buf_size +
                           2 * sizeof(float) * topk_tmp_val_buf_size;
   
-  auto ids = torch::zeros({input.size(0), 2, k}, torch::dtype(torch::kInt32).device(torch::kCUDA).requires_grad(false));
-  int* h_ids = ids.data_ptr<int>();
+
+  std::vector<int64_t> output_sizes = input.sizes().vec();
+  output_sizes.back() = k; 
+  auto selected_ids = torch::zeros(output_sizes, torch::dtype(torch::kInt32).device(input.device()).requires_grad(false));
+  auto selected_probs = torch::zeros(output_sizes, torch::dtype(input.dtype()).device(input.device()).requires_grad(false));
+  int* h_ids = selected_ids.data_ptr<int>();
+  float* h_values = selected_probs.data_ptr<float>();
   
   DecodingBeamsearchArguments args;
   args.batch_size_ = batch_size;
@@ -78,9 +83,9 @@ Tensor topK_v2(Tensor input, int64_t k) {
 
   cudaStream_t stream;
   check_cuda_error(cudaStreamCreate(&stream));
-  fastseq::topK_kernelLauncher<float>(topk_workspace, workspace_size, log_probs, h_ids, nullptr, args, stream);
+  fastseq::topK_kernelLauncher<float>(topk_workspace, workspace_size, log_probs, h_ids, h_values, nullptr, args, stream);
   
-  return ids;
+  return {selected_probs, selected_ids};
 }
 
 }
