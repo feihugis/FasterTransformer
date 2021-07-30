@@ -155,7 +155,4 @@ static auto weight_quantize =
   torch::RegisterOperators("fastertransformer::weight_quantize", &torch_ext::weight_quantize);
 
 static auto topk =
-  torch::RegisterOperators("fastertransformer::topk", &torch_ext::topK);
-
-static auto topk_v2 =
-  torch::RegisterOperators("fastseq::topk_v2", &torch_ext::topK_v2);
+  torch::RegisterOperators("fastseq::topk", &torch_ext::topK);

@@ -24,20 +24,20 @@
 #include <float.h>
 #include <type_traits>
 
+#include <vector>
+
 namespace fastseq {
 
 template <typename T>
-void topK_kernelLauncher(void* workspace,
-                         size_t& workspace_size,
-                         T* log_probs,
+void topK_kernelLauncher(T* log_probs,
                          const size_t num_elements,
+                         const std::vector<int64_t>& input_sizes,
+                         const int64_t k,
                          int* ids,
                          T* values,
                          T* temp_log_probs,
                          int* topk_tmp_id_buf,
                          T* topk_tmp_val_buf,
-                         const bool* finished,
-                         fastertransformer::DecodingBeamsearchArguments args,
                          cudaStream_t stream);
 
 } //namespace fastseq

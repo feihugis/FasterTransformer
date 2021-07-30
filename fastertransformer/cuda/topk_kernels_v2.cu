@@ -22,17 +22,16 @@ namespace fastseq {
 
   using namespace fastertransformer;
 
-  template void topK_kernelLauncher<float>(void* workspace,
-    size_t& workspace_size,
+  template void topK_kernelLauncher<float>(
     float* log_probs,
     const size_t num_elements,
+    const std::vector<int64_t>& input_sizes,
+    const int64_t k,
     int* ids,
     float* values,
     float* temp_log_probs,
     int* topk_tmp_id_buf,
     float* topk_tmp_val_buf,
-    const bool* finished,
-    DecodingBeamsearchArguments args,
     cudaStream_t stream);
 
   template<typename T, int BLOCK_SIZE, int BLOCKS_PER_BEAM>
@@ -137,10 +136,8 @@ __global__ void topk_stage_1_opt3(
     T* tmp_log_probs,
     int* topk_tmp_id_buf,
     T* topk_tmp_val_buf,
-    const bool* finished,
     const int k,
-    const int vocab_size,
-    const int end_id
+    const int vocab_size
 )
 {
     typedef cub::BlockReduce<TopK_2<T>, BLOCK_SIZE_> BlockReduce;
@@ -156,26 +153,6 @@ __global__ void topk_stage_1_opt3(
     TopK_2<T> partial;
     const bool IS_FP16 = std::is_same<T, half>::value;
     const T MAX_T_VAL = (IS_FP16)? HALF_FLT_MAX : FLT_MAX;
-
-    if(finished != nullptr && finished[row_id] == true)
-    {
-        if(tid < k)
-        {
-            const int index = tmp_topk_buf_index + tid;
-            if(block_lane == 0 && tid == 0)
-            {
-                topk_tmp_id_buf[index] = tmp_log_buf_index + end_id;
-                topk_tmp_val_buf[index] = log_probs[tmp_log_buf_index + end_id]; 
-            }
-            else
-            {
-                topk_tmp_id_buf[index] = -1;
-                topk_tmp_val_buf[index] = -MAX_T_VAL; 
-                
-            }
-        }
-        return;
-    }
 
     for(int elem_id = tid + block_lane * BLOCK_SIZE_; elem_id < vocab_size; elem_id += BLOCK_SIZE_ * BLOCKS_PER_BEAM_)
     {
@@ -279,87 +256,56 @@ __global__ void topk_stage_2_opt3(
         temp_log_probs, \
         topk_tmp_id_buf, \
         topk_tmp_val_buf, \
-        finished, \
-        beam_width, vocab_size, end_id); \
+        K, \
+        vocab_size); \
     topk_stage_2_opt3<float, BLOCK_SIZE_2_, BLOCKS_PER_BEAM_><<<batch_size, BLOCK_SIZE_2_, K * sizeof(int), stream>>>( \
         log_probs, \
         topk_tmp_id_buf, \
         topk_tmp_val_buf, \
         ids, \
         values, \
-        beam_width, \
+        K, \
         vocab_size); \
   break; \
 
 template <typename T>
-void topK_kernelLauncher(void* workspace,
-                         size_t& workspace_size,
-                         T* log_probs,
+void topK_kernelLauncher(T* log_probs,
                          const size_t num_elements,
+                         const std::vector<int64_t>& input_sizes,
+                         const int64_t K,
                          int* ids,
                          T* values,
                          T* temp_log_probs,
                          int* topk_tmp_id_buf,
                          T* topk_tmp_val_buf,
-                         const bool* finished,
-                         fastertransformer::DecodingBeamsearchArguments args,
                          cudaStream_t stream)
 {
-    const int batch_size = args.batch_size_;
-    const int beam_width = args.beam_width_;
-    const int vocab_size = args.vocab_size_padded_;
-    const T diversity_rate = args.beam_search_diversity_rate_;
-    const int end_id = args.end_id_;
-
-    const int max_block_per_beam = 8;
-    int temp_log_probs_buf_size = batch_size * beam_width * vocab_size; // type float
-    int topk_tmp_ids_buf_size = batch_size * beam_width * beam_width * max_block_per_beam;      // type int
-    int topk_tmp_val_buf_size = batch_size * beam_width * beam_width * max_block_per_beam;      // type float
-
-    // prevent memory misalinged address
-    temp_log_probs_buf_size = (int)(ceil(temp_log_probs_buf_size / 4.)) * 4;
-    topk_tmp_ids_buf_size = (int)(ceil(topk_tmp_ids_buf_size / 4.)) * 4;
-    topk_tmp_val_buf_size = (int)(ceil(topk_tmp_val_buf_size / 4.)) * 4;
-    
-    if(workspace == nullptr)
+    const int batch_size = num_elements / input_sizes.back();
+    const int vocab_size = input_sizes.back();
+ 
+    switch(K)
     {
-        workspace_size = sizeof(float) * temp_log_probs_buf_size + 
-                         sizeof(int) * topk_tmp_ids_buf_size + 
-                         sizeof(float) * topk_tmp_val_buf_size;
-        return;
-    }
-    else
-    {
-        // T* temp_log_probs = (T*)workspace;
-        // int* topk_tmp_id_buf = (int*)(temp_log_probs + temp_log_probs_buf_size);
-        // T* topk_tmp_val_buf = (T*)(topk_tmp_id_buf + topk_tmp_ids_buf_size);
-        if(diversity_rate == 0.0f)
-        {
-            switch(beam_width)
-            {
-                CASE_K(1,128,128,8);
-                CASE_K(4,128,128,8);
-                CASE_K(10,128,128,8);
-                CASE_K(16,128,128,5);
-                CASE_K(32,256,128,1);
-                CASE_K(64,256,256,1);
-                default:
-                    topk_stage_1_opt2_general<T, 128, 1><<<batch_size * beam_width * 1, 128, 0, stream>>>(
-                        log_probs,
-                        temp_log_probs,
-                        topk_tmp_id_buf,
-                        topk_tmp_val_buf,
-                        beam_width, vocab_size);
-                    topk_stage_2_opt2_general<T, 128, 1><<<batch_size, 128, 
-                            beam_width*beam_width*1*sizeof(float) + beam_width * sizeof(int), stream>>>(
-                        topk_tmp_id_buf,
-                        topk_tmp_val_buf,
-                        ids,
-                        beam_width);
-                    break;
-            }
-        }
-        return;
+        CASE_K(1,128,128,8);
+        CASE_K(3,128,128,8);
+        CASE_K(4,128,128,8);
+        CASE_K(10,128,128,8);
+        CASE_K(16,128,128,5);
+        CASE_K(32,256,128,1);
+        CASE_K(64,256,256,1);
+        default:
+            topk_stage_1_opt2_general<T, 128, 1><<<batch_size * K * 1, 128, 0, stream>>>(
+                log_probs,
+                temp_log_probs,
+                topk_tmp_id_buf,
+                topk_tmp_val_buf,
+                K, vocab_size);
+            topk_stage_2_opt2_general<T, 128, 1><<<batch_size, 128, 
+                    K * K * 1 * sizeof(float) + K * sizeof(int), stream>>>(
+                topk_tmp_id_buf,
+                topk_tmp_val_buf,
+                ids,
+                K);
+            break;
     }
 }
 

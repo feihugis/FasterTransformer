@@ -8,8 +8,6 @@ namespace torch_ext {
 using namespace fastertransformer;
 using torch::Tensor;
 
-Tensor topK(Tensor input, int64_t k);
-
-std::vector<Tensor> topK_v2(Tensor input, int64_t k);
+std::vector<Tensor> topK(Tensor input, int64_t k);
 
 }
