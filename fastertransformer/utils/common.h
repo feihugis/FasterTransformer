@@ -195,12 +195,29 @@ void print_to_file(const T *result, const int size, const char *file, cudaStream
 }
 
 template <typename T>
-void print_to_screen(T *result, const int size)
+void print_to_screen(const T *result, const int size)
 {
   T *tmp = (T *)malloc(sizeof(T) * size);
   check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * size, cudaMemcpyDeviceToHost));
   for (int i = 0; i < size; ++i)
-    printf("%d, %f\n", i, (float)tmp[i]);
+    // printf("%d, %f\n", i, (float)tmp[i]);
+    printf("%f, ", (float)tmp[i]);
+  free(tmp);
+  printf(" ...... \n");
+}
+
+template <typename T>
+void print_to_screen(const T *result, const int size, const char* comment)
+{
+  printf("============%s\n", comment);
+  T *tmp = (T *)malloc(sizeof(T) * 1 * 3 * 8 * 64);
+  check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * 1 * 3 * 8 * 64, cudaMemcpyDeviceToHost));
+  for (int row = 0; row < 3; ++row) {
+    for (int i = 0 + 512 * row; i < 512 * row + size; ++i)
+      // printf("%d, %f\n", i, (float)tmp[i]);
+      printf("%f, ", (float)tmp[i]);
+    printf(" ...... \n\n");
+  }
   free(tmp);
 }
 

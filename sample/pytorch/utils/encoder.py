@@ -171,13 +171,13 @@ class CustomEncoder(torch.nn.Module):
                 self.encoders.append(
                     torch.classes.FasterTransformer.Encoder(
                         *weights.listed_weights(i),
-                        head_num, head_size, remove_padding, int8_mode, layer_num, i, allow_gemm_test, use_trt_kernel))
+                        head_num, head_size, remove_padding, int8_mode, layer_num, i, allow_gemm_test, use_trt_kernel, 1.0))
             except:
                 # legacy ths for 20.03 image
                 self.encoders.append(
                     torch.classes.FasterTransformerEncoder(
                         *weights.listed_weights(i),
-                        head_num, head_size, remove_padding, int8_mode, layer_num, i, allow_gemm_test, use_trt_kernel))
+                        head_num, head_size, remove_padding, int8_mode, layer_num, i, allow_gemm_test, use_trt_kernel, 1.0))
         self.build_mask_remove_padding = torch.ops.fastertransformer.build_mask_remove_padding
         self.rebuild_padding = torch.ops.fastertransformer.rebuild_padding
 
@@ -207,7 +207,7 @@ class HuggingFaceEncoder(torch.nn.Module):
     def __init__(self, layer_num, head_num, head_size, weights=None):
         super().__init__()
         hidden_dim = head_num * head_size
-        conf = BertConfig(hidden_size=hidden_dim, intermediate_size=4*hidden_dim, num_attention_heads=head_num, num_hidden_layers=layer_num)
+        conf = BertConfig(hidden_size=hidden_dim, intermediate_size=4*hidden_dim, num_attention_heads=head_num, num_hidden_layers=layer_num, hidden_act="gelu_new")
         self.encoder = BertEncoder(conf)
         w = {}
         for k, v in weights.weights.items():

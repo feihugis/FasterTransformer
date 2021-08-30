@@ -97,7 +97,9 @@ def main():
 
         for i in range(step):
             output1 = onmt_decoder(output1, mem, src_pad_mask, cache, 0)
+            print(f"output1: {output1} \n")
             output2, self_cache, mem_cache = custom_decoder(output2, mem, mem_seq_lens, self_cache, mem_cache, i)
+            print(f"output2: {output2} \n")
             diff = torch.abs((output1 - output2) / output1)
             print('step: {}     Mean relative diff: {}     Max relative diff: {}     Min relative diff: {}'.format(
                 i, torch.mean(diff), torch.max(diff), torch.min(diff)))

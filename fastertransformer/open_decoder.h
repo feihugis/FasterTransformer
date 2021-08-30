@@ -252,7 +252,7 @@ public:
         }
     }
 
-    void forward(const DataType_ *from_tensor, const DataType_ *memory_tensor,
+    void forward_v0(const DataType_ *from_tensor, const DataType_ *memory_tensor,
                  DataType_ *key_cache_, DataType_ *value_cache_,
                  DataType_ *key_mem_cache_, DataType_ *value_mem_cache_,
                  const int *memory_sequence_length, DataType_ *decoder_output, const int step,
@@ -266,21 +266,25 @@ public:
         {
             /* masked multi-head attention */
             /* layernorm(from_tensor) -> norm_from_tensor_buf_ */
-
-            layer_norm(from_tensor,
-                       param_.self_layernorm.gamma,
-                       param_.self_layernorm.beta,
-                       norm_from_tensor_buf_,
-                       m,
-                       hidden_units_,
-                       param_.stream);
+            
+            //****** 1.
+            // layer_norm(from_tensor,
+            //            param_.self_layernorm.gamma,
+            //            param_.self_layernorm.beta,
+            //            norm_from_tensor_buf_,
+            //            m,
+            //            hidden_units_,
+            //            param_.stream);
 
 #ifndef NDEBUG
             cudaDeviceSynchronize();
             check_cuda_error(cudaGetLastError());
 #endif
             PUSH_RANGE("Transformer/slf_attn")
-            masked_multi_head_attention(norm_from_tensor_buf_, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
+            print_to_screen(from_tensor, 8, "FT decoder input");
+            // masked_multi_head_attention(norm_from_tensor_buf_, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
+            //****** 1. 
+            masked_multi_head_attention(from_tensor, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
             POP_RANGE
 
 #ifndef NDEBUG
@@ -295,12 +299,21 @@ public:
                     masked_output_buf_ + from_tensor -> masked_output_buf_
                     norm(masked_output_buf_) -> norm_masked_output_buf_ 
                 */
+                // add_bias_input_layernorm_2_kernelLauncher(from_tensor,
+                //                                           param_.cross_layernorm.gamma,
+                //                                           param_.cross_layernorm.beta,
+                //                                           param_.self_attention.attention_output_weight.bias,
+                //                                           masked_output_buf_,
+                //                                           norm_masked_output_buf_, m, hidden_units_, param_.stream);
+
+                //****** 2.
                 add_bias_input_layernorm_2_kernelLauncher(from_tensor,
-                                                          param_.cross_layernorm.gamma,
-                                                          param_.cross_layernorm.beta,
+                                                          param_.self_layernorm.gamma,
+                                                          param_.self_layernorm.beta,
                                                           param_.self_attention.attention_output_weight.bias,
                                                           masked_output_buf_,
                                                           norm_masked_output_buf_, m, hidden_units_, param_.stream);
+                print_to_screen(norm_masked_output_buf_, 8, "FT decoder norm_masked_output_buf_");
 #ifndef NDEBUG
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
@@ -318,12 +331,21 @@ public:
                     cross_output_buf_ + bias + masked_output_buf_ -> cross_output_buf_
                     norm(cross_otuput_buf) -> normed_last_context (input for ffn)
                 */
-                add_bias_input_layernorm_2_kernelLauncher(masked_output_buf_,
-                                                          param_.ffn_layernorm.gamma,
-                                                          param_.ffn_layernorm.beta,
+                // add_bias_input_layernorm_2_kernelLauncher(masked_output_buf_,
+                //                                           param_.ffn_layernorm.gamma,
+                //                                           param_.ffn_layernorm.beta,
+                //                                           param_.cross_attention.attention_output_weight.bias,
+                //                                           cross_output_buf_,
+                //                                           norm_cross_output_buf_, m, hidden_units_, param_.stream);
+                
+                //****** 3.
+                add_bias_input_layernorm_2_kernelLauncher(norm_masked_output_buf_,
+                                                          param_.cross_layernorm.gamma,
+                                                          param_.cross_layernorm.beta,
                                                           param_.cross_attention.attention_output_weight.bias,
                                                           cross_output_buf_,
                                                           norm_cross_output_buf_, m, hidden_units_, param_.stream);
+                // print_to_screen(norm_cross_output_buf_, 8, "FT decoder norm_cross_output_buf_");
 #ifndef NDEBUG
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
@@ -333,7 +355,167 @@ public:
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
 #endif
-                add_bias_input_kernelLauncher(decoder_output, param_.ffn.output_weight.bias, cross_output_buf_, m, hidden_units_, param_.stream);
+                // 4.
+                // add_bias_input_kernelLauncher(decoder_output, param_.ffn.output_weight.bias, cross_output_buf_, m, hidden_units_, param_.stream);
+                add_bias_input_layernorm_2_kernelLauncher(norm_cross_output_buf_,
+                                                          param_.ffn_layernorm.gamma,
+                                                          param_.ffn_layernorm.beta,
+                                                          param_.ffn.output_weight.bias,
+                                                          decoder_output,
+                                                          decoder_output, // cross_output_buf_
+                                                          m, hidden_units_, param_.stream);
+                // print_to_screen(cross_output_buf_, 8, "FT decoder ffn2 cross_output_buf_(norm)");
+                // print_to_screen(decoder_output, 8, "FT decoder decoder_output");
+            }
+            else
+            {
+                add_bias_input_layernorm_2_kernelLauncher(from_tensor,
+                                                          param_.ffn_layernorm.gamma,
+                                                          param_.ffn_layernorm.beta,
+                                                          param_.self_attention.attention_output_weight.bias,
+                                                          masked_output_buf_,
+                                                          norm_masked_output_buf_, m, hidden_units_, param_.stream);
+#ifndef NDEBUG
+                cudaDeviceSynchronize();
+                check_cuda_error(cudaGetLastError());
+#endif
+                // For GPT-2 decoder
+                PUSH_RANGE("Transformer/MLP")
+                ffn(norm_masked_output_buf_, ffn_inner_buf_, decoder_output, m, 4 * t_parallel_param_.local_hidden_units_, hidden_units_, ActivationType::GELU);
+                POP_RANGE
+
+#ifndef NDEBUG
+                cudaDeviceSynchronize();
+                check_cuda_error(cudaGetLastError());
+#endif
+                add_bias_input_kernelLauncher(decoder_output, param_.ffn.output_weight.bias, masked_output_buf_, m, hidden_units_, param_.stream);
+            }
+#ifndef NDEBUG
+            cudaDeviceSynchronize();
+            check_cuda_error(cudaGetLastError());
+#endif
+        }
+
+        catch (std::runtime_error &error)
+        {
+            throw error;
+        }
+    }
+
+     void forward(const DataType_ *from_tensor, const DataType_ *memory_tensor,
+                 DataType_ *key_cache_, DataType_ *value_cache_,
+                 DataType_ *key_mem_cache_, DataType_ *value_mem_cache_,
+                 const int *memory_sequence_length, DataType_ *decoder_output, const int step,
+                 const int decoder_max_seq_len, const bool is_cross_attention, const bool* finished = nullptr)
+    {
+#ifndef NDEBUG
+        PRINT_FUNC_NAME_();
+#endif
+        const int m = l_parallel_param_.local_batch_size;
+        try
+        {
+            /* masked multi-head attention */
+            /* layernorm(from_tensor) -> norm_from_tensor_buf_ */
+            
+            //****** 1.
+            // layer_norm(from_tensor,
+            //            param_.self_layernorm.gamma,
+            //            param_.self_layernorm.beta,
+            //            norm_from_tensor_buf_,
+            //            m,
+            //            hidden_units_,
+            //            param_.stream);
+
+#ifndef NDEBUG
+            cudaDeviceSynchronize();
+            check_cuda_error(cudaGetLastError());
+#endif
+            PUSH_RANGE("Transformer/slf_attn")
+            print_to_screen(from_tensor, 8, "FT decoder input");
+            // masked_multi_head_attention(norm_from_tensor_buf_, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
+            //****** 1. 
+            masked_multi_head_attention(from_tensor, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
+            POP_RANGE
+
+#ifndef NDEBUG
+            cudaDeviceSynchronize();
+            check_cuda_error(cudaGetLastError());
+#endif
+
+            if (is_cross_attention == true)
+            {
+                /* 
+                    add bias to masked_output_buf_
+                    masked_output_buf_ + from_tensor -> masked_output_buf_
+                    norm(masked_output_buf_) -> norm_masked_output_buf_ 
+                */
+                // add_bias_input_layernorm_2_kernelLauncher(from_tensor,
+                //                                           param_.cross_layernorm.gamma,
+                //                                           param_.cross_layernorm.beta,
+                //                                           param_.self_attention.attention_output_weight.bias,
+                //                                           masked_output_buf_,
+                //                                           norm_masked_output_buf_, m, hidden_units_, param_.stream);
+
+                //****** 2.
+                add_bias_input_layernorm_2_kernelLauncher(from_tensor,
+                                                          param_.self_layernorm.gamma,
+                                                          param_.self_layernorm.beta,
+                                                          param_.self_attention.attention_output_weight.bias,
+                                                          masked_output_buf_,
+                                                          norm_masked_output_buf_, m, hidden_units_, param_.stream);
+                print_to_screen(norm_masked_output_buf_, 8, "FT decoder norm_masked_output_buf_");
+#ifndef NDEBUG
+                cudaDeviceSynchronize();
+                check_cuda_error(cudaGetLastError());
+#endif
+                // For Attention is All You Need decoder
+                /* cross attention with memory */
+                cross_multi_head_attention(norm_masked_output_buf_, memory_tensor,
+                                           key_mem_cache_, value_mem_cache_, cross_output_buf_,
+                                           memory_sequence_length, finished, param_.request_max_mem_seq_len, step);
+#ifndef NDEBUG
+                cudaDeviceSynchronize();
+                check_cuda_error(cudaGetLastError());
+#endif
+                /* 
+                    cross_output_buf_ + bias + masked_output_buf_ -> cross_output_buf_
+                    norm(cross_otuput_buf) -> normed_last_context (input for ffn)
+                */
+                // add_bias_input_layernorm_2_kernelLauncher(masked_output_buf_,
+                //                                           param_.ffn_layernorm.gamma,
+                //                                           param_.ffn_layernorm.beta,
+                //                                           param_.cross_attention.attention_output_weight.bias,
+                //                                           cross_output_buf_,
+                //                                           norm_cross_output_buf_, m, hidden_units_, param_.stream);
+                
+                //****** 3.
+                add_bias_input_layernorm_2_kernelLauncher(norm_masked_output_buf_,
+                                                          param_.cross_layernorm.gamma,
+                                                          param_.cross_layernorm.beta,
+                                                          param_.cross_attention.attention_output_weight.bias,
+                                                          cross_output_buf_,
+                                                          norm_cross_output_buf_, m, hidden_units_, param_.stream);
+                // print_to_screen(norm_cross_output_buf_, 8, "FT decoder norm_cross_output_buf_");
+#ifndef NDEBUG
+                cudaDeviceSynchronize();
+                check_cuda_error(cudaGetLastError());
+#endif
+                ffn(norm_cross_output_buf_, ffn_inner_buf_, decoder_output, m, 4 * t_parallel_param_.local_hidden_units_, hidden_units_, ActivationType::RELU);
+#ifndef NDEBUG
+                cudaDeviceSynchronize();
+                check_cuda_error(cudaGetLastError());
+#endif
+                // 4.
+                // add_bias_input_kernelLauncher(decoder_output, param_.ffn.output_weight.bias, cross_output_buf_, m, hidden_units_, param_.stream);
+                add_bias_input_layernorm_2_kernelLauncher(norm_cross_output_buf_,
+                                                          param_.ffn_layernorm.gamma,
+                                                          param_.ffn_layernorm.beta,
+                                                          param_.ffn.output_weight.bias,
+                                                          decoder_output,
+                                                          decoder_output, // cross_output_buf_
+                                                          m, hidden_units_, param_.stream);
+                // print_to_screen(cross_output_buf_, 8, "FT decoder ffn2 cross_output_buf_(norm)");
+                // print_to_screen(decoder_output, 8, "FT decoder decoder_output");
             }
             else
             {
@@ -529,8 +711,10 @@ public:
                   cublasAlgo));
             }
             else
-            {
-
+            {   
+                printf("n: %d, m: %d, k: %d", n, m, k);
+                
+                
                 cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
                                                     param_.cublas_handle, 
                                                     CUBLAS_OP_N, CUBLAS_OP_N,
@@ -542,6 +726,7 @@ public:
                                                     query_buf_, CType_, n,
                                                     param_.stream, cublasAlgoMap_,
                                                     cublas_workspace_);
+                print_to_screen(query_buf_, 8, "FT decoder self_attn Q*Wq output");
 
                 cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
                                                     param_.cublas_handle, 
@@ -553,7 +738,7 @@ public:
                                                     &beta,
                                                     key_buf_, CType_, n,
                                                     param_.stream, cublasAlgoMap_,
-                                                    cublas_workspace_);                
+                                                    cublas_workspace_);
 
                 cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
                                                     param_.cublas_handle, 
@@ -566,6 +751,8 @@ public:
                                                     value_buf_, CType_, n,
                                                     param_.stream, cublasAlgoMap_,
                                                     cublas_workspace_);
+                // printf("============ FT decoder self_attn V output: \n");
+                // print_to_screen(value_buf_, 8);
             }
             masked_attention_dispatch<DataType_>(
               key_buf_, value_buf_,
