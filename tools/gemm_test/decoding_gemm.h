@@ -493,7 +493,7 @@ void generate_decoding_gemm_config(int batch_size,
                                   int seq_len,
                                   int memory_hidden_units)
 {
-  FILE* fd = fopen("decoding_gemm_config.in", "w");
+  FILE* fd = fopen("decoding_gemm_config.in", "a+");
   if(fd == NULL)
   {
     printf("[ERROR] Cannot write to file decoding_gemm_config.in\n");

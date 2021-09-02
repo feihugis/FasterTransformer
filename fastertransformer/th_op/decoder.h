@@ -34,7 +34,7 @@ class IFTDecoder {
 public:
   virtual ~IFTDecoder() {}
   virtual void forward(int batch_size, int seq_len, int mem_hidden_dim, int step,
-                       Tensor& input, Tensor& memory, Tensor& memory_seq_lens, std::vector<Tensor>& self_cache, Tensor& mem_cache, Tensor& output) = 0;
+                       Tensor& input, Tensor& memory, const int64_t input_seq_len, const int64_t memory_seq_len, std::vector<Tensor>& self_cache, Tensor& mem_cache, Tensor& output) = 0;
 };
 
 template <typename T>
@@ -84,7 +84,7 @@ public:
   }
 
   void forward(int batch_size, int seq_len, int mem_hidden_dim, int step,
-               Tensor& input, Tensor& memory, Tensor& memory_seq_lens, std::vector<Tensor>& self_cache, Tensor& mem_cache, Tensor& output) override
+               Tensor& input, Tensor& memory, const int64_t input_seq_len, const int64_t memory_seq_len, std::vector<Tensor>& self_cache, Tensor& mem_cache, Tensor& output) override
   {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     check_cuda_error(cublasSetStream(decoder_params.cublas_handle, stream));
@@ -98,7 +98,7 @@ public:
     T* mem_cache_ptr = get_ptr<T>(mem_cache);
     const T* input_ptr = get_ptr<T>(input);
     const T* memory_ptr = get_ptr<T>(memory);
-    const int* memory_seq_lens_ptr = get_ptr<int>(memory_seq_lens);
+    // const int* memory_seq_lens_ptr = get_ptr<int>(memory_seq_lens);
 
     // Detect we use batch major
     bool use_batch_major = (self_cache[0].sizes().size() == 5)? true : false;
@@ -118,7 +118,7 @@ public:
     }
 
     decoder->initialize(decoder_params, decoder_buffer, cublas_workspace);
-    decoder->forward(input_ptr, memory_ptr, K_cache, V_cache, K_mem_cache, V_mem_cache, memory_seq_lens_ptr, output_ptr, step, decoder_max_seq_len, true);
+    decoder->forward(input_ptr, memory_ptr, K_cache, V_cache, K_mem_cache, V_mem_cache, input_seq_len, memory_seq_len, output_ptr, step, decoder_max_seq_len, true);
     allocator.free(decoder_buffer);
   }
 
@@ -168,7 +168,7 @@ public:
 
   ~FasterTransformerDecoder();
   
-  Tensor forward(Tensor input, Tensor memory, Tensor memory_seq_lens, std::vector<Tensor> self_cache, Tensor mem_cache, int64_t step);
+  Tensor forward(Tensor input, Tensor memory, int64_t input_seq_len, int64_t memory_seq_len, std::vector<Tensor> self_cache, Tensor mem_cache, int64_t step);
 
   std::vector<Tensor> get_pickle_info() const;
 

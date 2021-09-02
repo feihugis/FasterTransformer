@@ -119,7 +119,7 @@ class CustomDecoder(torch.nn.Module):
                 # legacy ths for 20.03 image
                 self.decoders.append(torch.classes.FasterTransformerDecoder(head_num, head_size, mem_hidden_dim, *weights.w[i]))
 
-    def forward(self, inputs, memory, memory_seq_lens, self_cache, mem_cache, step):
+    def forward(self, inputs, memory, input_sequence_length, memory_seq_lens, self_cache, mem_cache, step):
         dtype = torch.half if self.fp16 else torch.float32
         use_batch_major_op_cache, _ = get_op_cache_config(self.head_size, self.fp16)
         if use_batch_major_op_cache == False:
@@ -129,7 +129,7 @@ class CustomDecoder(torch.nn.Module):
             self_cache[1] = torch.cat([self_cache[1], self_cache_tmp[1]], 1)
         output = inputs
         for i in range(self.layer_num):
-            output = self.decoders[i].forward(output, memory, memory_seq_lens, (self_cache[0][i], self_cache[1][i]), mem_cache[i], step)
+            output = self.decoders[i].forward(output, memory, input_sequence_length, memory_seq_lens, (self_cache[0][i], self_cache[1][i]), mem_cache[i], step)
         return output, self_cache, mem_cache
 
 

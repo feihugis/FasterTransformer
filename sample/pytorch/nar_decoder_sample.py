@@ -93,8 +93,8 @@ def run():
     hidden_dim = 512
     batch_size = 1
     beam_width = 1
-    seq_len = 6
-    max_seq_len = seq_len
+    mem_seq_len = 6
+    max_seq_len = 16
     decoding_max_seq_len = 32
 
     step = 1
@@ -102,13 +102,8 @@ def run():
     # path = None
     is_fp16 = False
 
-    inp = torch.empty(batch_size, 3, hidden_dim).cuda()
-    mem = torch.empty(batch_size, seq_len, hidden_dim).cuda()
-    torch.nn.init.uniform_(inp, -1, 1)
-    torch.nn.init.uniform_(mem, -1, 1)
-
-    mem_seq_lens = torch.randint(seq_len, seq_len + 1, (batch_size,), dtype=torch.int32).cuda()
-    src_pad_mask = ~sequence_mask(mem_seq_lens, seq_len).unsqueeze(1)
+    mem_seq_lens = torch.randint(mem_seq_len, mem_seq_len + 1, (batch_size,), dtype=torch.int32).cuda()
+    src_pad_mask = ~sequence_mask(mem_seq_lens, mem_seq_len).unsqueeze(1)
 
     weights = DecoderWeights(layer_num, hidden_dim, path)
 
@@ -121,23 +116,36 @@ def run():
 
 
     with torch.no_grad():
-        output = inp
+        
         self_cache, mem_cache = init_op_cache(layer_num, batch_size, beam_width, max_seq_len, decoding_max_seq_len, head_num, head_size, hidden_dim, is_fp16)
-        for i in range(1):
+        
+        input_seq_len = 6
+        # for input_seq_len in range(9, 10, 1):
+        for input_seq_len in range(1, 10, 1):
+            inp = torch.empty(batch_size, input_seq_len, hidden_dim).cuda()
+            mem = torch.empty(batch_size, mem_seq_len, hidden_dim).cuda()
+            torch.nn.init.uniform_(inp, -1, 1)
+            torch.nn.init.uniform_(mem, -1, 1)
+
             torch.cuda.synchronize()
             t1 = time.time()
-            output, self_cache, mem_cache = custom_decoder(inp, mem, mem_seq_lens, self_cache, mem_cache, i)
+            ft_output, self_cache, mem_cache = custom_decoder(inp, mem, input_seq_len, mem_seq_len, self_cache, mem_cache, 1)
             torch.cuda.synchronize()
             t2 = time.time()
-            # print(f"$$$$$$$$$$$$ FT time: {t2 - t1}: {output.shape} \n", output[:, :, :16], '\n')
+            print(f"$$$$$$$$$$$$ FT time: {t2 - t1}: {ft_output.shape} \n", ft_output[:, :, :], '\n')
             
             torch.cuda.synchronize()
             t3 = time.time()
             cache = init_onmt_cache(layer_num, mem)
-            output2 = onmt_decoder(inp, mem, src_pad_mask, cache, 0)
+            onmt_output = onmt_decoder(inp, mem, src_pad_mask, cache, 0)
             torch.cuda.synchronize()
             t4 = time.time()
-            # print(f"$$$$$$$$$$$$ ONMT time: {t4 - t3}: {output2.shape} \n", output2[:, :, :16], '\n')
+            print(f"$$$$$$$$$$$$ ONMT time: {t4 - t3}: {onmt_output.shape} \n", onmt_output[:, :, :], '\n')
+
+            diff = ft_output - onmt_output
+            print('Mean diff: {}'.format(torch.mean(diff)))
+            print('Max diff:  {}'.format(torch.max(diff)))
+            print('Min diff:  {}'.format(torch.min(diff)))
 
 
 if __name__ == '__main__':

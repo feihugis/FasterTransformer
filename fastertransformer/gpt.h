@@ -576,7 +576,8 @@ public:
                                           K_cache_[0] + cache_offset,
                                           V_cache_[0] + cache_offset,
                                           nullptr, nullptr, // key_mem_cache_ and value_mem_cache_ should be nullptr
-                                          nullptr, // memory_sequence_length should be nullptr
+                                          0, // input_sequence_length
+                                          0, // memory_sequence_length should be nullptr
                                           from_tensor_[out_id], step, dummy_decoder_max_seq_len,
                                           false, 
                                           finished_buf_ + ite * local_batch);

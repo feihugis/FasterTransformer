@@ -103,6 +103,11 @@ private:
     DataType_ *norm_cross_output_buf_, *ffn_inner_buf_;
     DataType_ *key_buf_, *value_buf_;
 
+    DataType_ *unfused_masked_multi_head_attention_;
+
+    DataType_ *unfused_cross_multi_head_attention_;
+    int space_for_unfused_cross_multi_head_attention_;
+
     DataType_ **qkv_kernel_;
     DataType_ **qkv_input_;
     DataType_ **qkv_buf_;
@@ -200,7 +205,22 @@ public:
     int getWorkspaceSize()
     {
         assert(max_batch_size_ != -1);
-        return 13 * max_batch_size_ * hidden_units_ + sizeof(DataType_ *) * 9;
+        const int input_seq_len = 16;
+        const int seq_len_k = 16;
+        const int seq_len_v = 16;
+        int space_for_unfused_masked_multi_head_attention = 1 * hidden_units_ * input_seq_len * 8; 
+        space_for_unfused_cross_multi_head_attention_ = get_spaceszie_for_unfused_cross_multi_head_attention(
+            /*batch_size*/1,
+            /*num_heads*/8,
+            /*hidden_dims*/512,
+            /*seq_len_q*/input_seq_len,
+            seq_len_k,
+            /*seq_len_v*/16);
+        
+        return 13 * max_batch_size_ * hidden_units_ * input_seq_len +
+               sizeof(DataType_ *) * 9 +
+               space_for_unfused_masked_multi_head_attention +
+               space_for_unfused_cross_multi_head_attention_;
     }
 
     void set_tensor_parallel_param(const TensorParallelParam param)
@@ -220,7 +240,8 @@ public:
 #endif
         param_ = param;
         if(l_parallel_param_.local_batch_size == -1 || set_local_batch == true) l_parallel_param_.local_batch_size = param_.request_batch_size;
-        const int buf_size = max_batch_size_ * hidden_units_;
+        const int input_seq_len = 6;
+        const int buf_size = max_batch_size_ * hidden_units_ * input_seq_len;
         //cublas_workspace_ should be the start pointer of cudaMalloc()
         //to ensure 16B alignemnet
         cublas_workspace_ = cublas_workapsce;
@@ -237,7 +258,11 @@ public:
         norm_cross_output_buf_ = cross_output_buf_ + buf_size; //norm(multi-head attention_output)
         ffn_inner_buf_ = norm_cross_output_buf_ + buf_size;         //4 buf size to store inner product
 
-        qkv_kernel_ = (DataType_ **)(ffn_inner_buf_ + 4 * buf_size);
+        unfused_masked_multi_head_attention_ = ffn_inner_buf_ + 4 * buf_size;
+        unfused_cross_multi_head_attention_ =  unfused_masked_multi_head_attention_ + 8 * buf_size;
+        
+        // qkv_kernel_ = (DataType_ **)(ffn_inner_buf_ + 4 * buf_size);
+        qkv_kernel_ = (DataType_ **)(unfused_cross_multi_head_attention_ + space_for_unfused_cross_multi_head_attention_);
         qkv_input_ = qkv_kernel_ + 3;
         qkv_buf_ = qkv_input_ + 3;
 
@@ -405,13 +430,17 @@ public:
      void forward(const DataType_ *from_tensor, const DataType_ *memory_tensor,
                  DataType_ *key_cache_, DataType_ *value_cache_,
                  DataType_ *key_mem_cache_, DataType_ *value_mem_cache_,
-                 const int *memory_sequence_length, DataType_ *decoder_output, const int step,
+                 const int input_sequence_length,
+                 const int memory_sequence_length, DataType_ *decoder_output, const int step,
                  const int decoder_max_seq_len, const bool is_cross_attention, const bool* finished = nullptr)
     {
 #ifndef NDEBUG
         PRINT_FUNC_NAME_();
 #endif
         const int m = l_parallel_param_.local_batch_size;
+        const int seq_len_q = input_sequence_length;
+        const int seq_len_k = memory_sequence_length;
+        const int seq_len_v = memory_sequence_length;
         try
         {
             /* masked multi-head attention */
@@ -431,10 +460,22 @@ public:
             check_cuda_error(cudaGetLastError());
 #endif
             PUSH_RANGE("Transformer/slf_attn")
-            print_to_screen(from_tensor, 8, "FT decoder input");
+            // print_to_screen(from_tensor, 8, "FT decoder input");
             // masked_multi_head_attention(norm_from_tensor_buf_, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
             //****** 1. 
-            masked_multi_head_attention(from_tensor, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
+            // masked_multi_head_attention(from_tensor, key_cache_, value_cache_, masked_output_buf_, finished, step, decoder_max_seq_len);
+            unfused_masked_multi_head_attention(
+                unfused_masked_multi_head_attention_,
+                from_tensor,
+                key_cache_,
+                value_cache_,
+                masked_output_buf_,
+                nullptr /*attr_mask*/,
+                1 /*local_batch_size*/,
+                seq_len_q /*seq_len*/,
+                0 /*ite*/,
+                -1 /*max_seq_len*/,
+                false /*is_final*/);
             POP_RANGE
 
 #ifndef NDEBUG
@@ -462,17 +503,33 @@ public:
                                                           param_.self_layernorm.beta,
                                                           param_.self_attention.attention_output_weight.bias,
                                                           masked_output_buf_,
-                                                          norm_masked_output_buf_, m, hidden_units_, param_.stream);
-                print_to_screen(norm_masked_output_buf_, 8, "FT decoder norm_masked_output_buf_");
+                                                          norm_masked_output_buf_, m*seq_len_q, hidden_units_, param_.stream);
+                // print_to_screen(norm_masked_output_buf_, 8, "FT decoder self_attn norm_masked_output_buf_", 512);
 #ifndef NDEBUG
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
 #endif
+                // printf("!!!!!!!!!!!!!!!!!!!------------------------------------------!!!!!!!!!!!!!!!!!!!!!!!\n");
                 // For Attention is All You Need decoder
                 /* cross attention with memory */
-                cross_multi_head_attention(norm_masked_output_buf_, memory_tensor,
-                                           key_mem_cache_, value_mem_cache_, cross_output_buf_,
-                                           memory_sequence_length, finished, param_.request_max_mem_seq_len, step);
+                // cross_multi_head_attention(norm_masked_output_buf_, memory_tensor,
+                //                            key_mem_cache_, value_mem_cache_, cross_output_buf_,
+                //                            memory_sequence_length, finished, param_.request_max_mem_seq_len, step);
+                unfused_cross_multi_head_attention(
+                    unfused_cross_multi_head_attention_,
+                    norm_masked_output_buf_,
+                    memory_tensor,
+                    key_mem_cache_,
+                    value_mem_cache_,
+                    cross_output_buf_,
+                    nullptr,
+                    1,
+                    seq_len_q,
+                    seq_len_k,
+                    seq_len_v,
+                    0,
+                    -1,
+                    false);
 #ifndef NDEBUG
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
@@ -494,13 +551,19 @@ public:
                                                           param_.cross_layernorm.beta,
                                                           param_.cross_attention.attention_output_weight.bias,
                                                           cross_output_buf_,
-                                                          norm_cross_output_buf_, m, hidden_units_, param_.stream);
-                // print_to_screen(norm_cross_output_buf_, 8, "FT decoder norm_cross_output_buf_");
+                                                          norm_cross_output_buf_, m * seq_len_q, hidden_units_, param_.stream);
+                // print_to_screen(norm_cross_output_buf_, 8, "FT decoder cross_attn norm_cross_output_buf_", 512);
 #ifndef NDEBUG
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
 #endif
-                ffn(norm_cross_output_buf_, ffn_inner_buf_, decoder_output, m, 4 * t_parallel_param_.local_hidden_units_, hidden_units_, ActivationType::RELU);
+                ffn(norm_cross_output_buf_,
+                    ffn_inner_buf_,
+                    decoder_output,
+                    m * seq_len_q,
+                    4 * t_parallel_param_.local_hidden_units_,
+                    hidden_units_,
+                    ActivationType::RELU);
 #ifndef NDEBUG
                 cudaDeviceSynchronize();
                 check_cuda_error(cudaGetLastError());
@@ -513,7 +576,7 @@ public:
                                                           param_.ffn.output_weight.bias,
                                                           decoder_output,
                                                           decoder_output, // cross_output_buf_
-                                                          m, hidden_units_, param_.stream);
+                                                          m * seq_len_q, hidden_units_, param_.stream);
                 // print_to_screen(cross_output_buf_, 8, "FT decoder ffn2 cross_output_buf_(norm)");
                 // print_to_screen(decoder_output, 8, "FT decoder decoder_output");
             }
@@ -714,7 +777,6 @@ public:
             {   
                 printf("n: %d, m: %d, k: %d", n, m, k);
                 
-                
                 cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
                                                     param_.cublas_handle, 
                                                     CUBLAS_OP_N, CUBLAS_OP_N,
@@ -790,9 +852,12 @@ public:
                                     DataType_ *decoder_output, const int *memory_sequence_length, const bool* finished,
                                     const int max_seq_len, const int step)
     {
-        int m = param_.request_batch_size;
+        int input_seq_len = 6;
+        int m = param_.request_batch_size * input_seq_len;
         int n = t_parallel_param_.local_hidden_units_;
         int k = hidden_units_;
+        
+        printf("============ cross attn: m=%d, n=%d, k=%d \n", m, n , k);
 
         DataType_ alpha = (DataType_)1.0f, beta = (DataType_)0.0f;
 
@@ -963,6 +1028,7 @@ public:
         {
             const int n = t_parallel_param_.local_hidden_units_;
             const int k = hidden_units_;
+            // printf("============ n=%d, m=%d, k=%d \n", n, m, k);
             cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
                                                 param_.cublas_handle, 
                                                 CUBLAS_OP_N, CUBLAS_OP_N,
@@ -998,7 +1064,8 @@ public:
                                                 V, CType_, n,
                                                 param_.stream, cublasAlgoMap_,
                                                 cublas_workspace_);
-            
+            // print_to_screen(Q, 8, "Step 1: from_tensow * Wq", 512);
+
             add_QKV_bias_transpose_kernelLauncher(q_buf, k_buf, v_buf,
               Q, param_.self_attention.query_weight.bias,
               K, param_.self_attention.key_weight.bias,
@@ -1006,51 +1073,56 @@ public:
               local_batch_size, seq_len,
               t_parallel_param_.local_head_num_,
               size_per_head_, param_.stream);
+            
+            // print_to_screen(q_buf, 8, "Step 2: QKV_Bias q_buf", 64);
+            // print_to_screen(k_buf, 8, "Step 2: QKV_Bias k_buf", 64);
         }
 
         // !!! need to implement cget_cache_config
-        if(max_seq_len == -1 || USE_CACHE_BATCH_MAJOR_ATTENTION == 0  )
-        {
-            transpose_4d_kernelLauncher(key_cache_, k_buf,
-            local_batch_size,
-            seq_len,
-            size_per_head_,
-            t_parallel_param_.local_hidden_units_,
-            t_parallel_param_.local_head_num_,
-            param_.request_batch_size,
-            ite,
-            param_.stream);
+        // if(max_seq_len == -1 || USE_CACHE_BATCH_MAJOR_ATTENTION == 0  )
+        // {
+        //     transpose_4d_kernelLauncher(key_cache_, k_buf,
+        //     local_batch_size,
+        //     seq_len,
+        //     size_per_head_,
+        //     t_parallel_param_.local_hidden_units_,
+        //     t_parallel_param_.local_head_num_,
+        //     param_.request_batch_size,
+        //     ite,
+        //     param_.stream);
 
-            transpose_4d_kernelLauncher(value_cache_, v_buf,
-            local_batch_size,
-            seq_len,
-            size_per_head_,
-            t_parallel_param_.local_hidden_units_,
-            t_parallel_param_.local_head_num_,
-            param_.request_batch_size,
-            ite,
-            param_.stream);
-        }
-        else if (USE_CACHE_BATCH_MAJOR_ATTENTION == 1)
-        {
-            // Use batch major
-            // put k/v_buf from shape [B, H, L, Dh]
-            // to cache [B, H, Dh/x, L, x]  and [B, H, L, Dh/x, x]
-            transpose_4d_batch_major_kernelLauncher(key_cache_, value_cache_,
-                                k_buf, v_buf,
-                                local_batch_size,
-                                seq_len,
-                                max_seq_len,
-                                size_per_head_,
-                                t_parallel_param_.local_head_num_,
-                                param_.stream);
-        }
-        else
-        {
-            printf("[ERROR] Can not decide on the cache config \n");
-            exit(-1);
-        }
-
+        //     transpose_4d_kernelLauncher(value_cache_, v_buf,
+        //     local_batch_size,
+        //     seq_len,
+        //     size_per_head_,
+        //     t_parallel_param_.local_hidden_units_,
+        //     t_parallel_param_.local_head_num_,
+        //     param_.request_batch_size,
+        //     ite,
+        //     param_.stream);
+        // }
+        // else if (USE_CACHE_BATCH_MAJOR_ATTENTION == 1)
+        // {
+        //     // Use batch major
+        //     // put k/v_buf from shape [B, H, L, Dh]
+        //     // to cache [B, H, Dh/x, L, x]  and [B, H, L, Dh/x, x]
+        //     transpose_4d_batch_major_kernelLauncher(key_cache_, value_cache_,
+        //                         k_buf, v_buf,
+        //                         local_batch_size,
+        //                         seq_len,
+        //                         max_seq_len,
+        //                         size_per_head_,
+        //                         t_parallel_param_.local_head_num_,
+        //                         param_.stream);
+        // }
+        // else
+        // {
+        //     printf("[ERROR] Can not decide on the cache config \n");
+        //     exit(-1);
+        // }
+        
+        // print_to_screen(key_cache_, 8, "Step 3: transpose key_cache_", 64);
+        
         if(is_final) return;
 
         cublasGemmAlgo_t cublasAlgo = static_cast<cublasGemmAlgo_t>(getAlgoIdFromMap(cublasAlgoMap_, local_batch_size * t_parallel_param_.local_head_num_, seq_len, seq_len, size_per_head_, std::is_same<float, DataType_>::value ? FLOAT_DATATYPE : HALF_DATATYPE));
@@ -1067,6 +1139,8 @@ public:
           computeType_,
           cublasAlgo));
 
+        // print_to_screen(qk_buf, 3, "Step 4: q*k -> qk_buf", 3);
+
         attn_softmax_kernelLauncher(qk_buf, 
                                     attr_mask,
                                     local_batch_size,
@@ -1074,6 +1148,8 @@ public:
                                     t_parallel_param_.local_head_num_,
                                     scalar,
                                     param_.stream);
+        
+        // print_to_screen(qk_buf, 6, "Step 5: softmax(qk_buf) -> attn(qk_buf)", seq_len);
 
         cublasAlgo = static_cast<cublasGemmAlgo_t>(getAlgoIdFromMap(cublasAlgoMap_, local_batch_size * t_parallel_param_.local_head_num_, size_per_head_, seq_len, seq_len, std::is_same<float, DataType_>::value ? FLOAT_DATATYPE : HALF_DATATYPE));
         
@@ -1115,6 +1191,264 @@ public:
 
             PUSH_RANGE("Transformer/slf_attn/all2all_reduce")
             all2all_reduce_sum(decoder_output, decoder_output, m*n,
+                            t_parallel_param_, param_.stream);
+            POP_RANGE
+        }
+    }
+
+    int get_spaceszie_for_unfused_cross_multi_head_attention(
+        const int batch_size,
+        const int num_heads,
+        const int hidden_dims,
+        const int seq_len_q,
+        const int seq_len_k,
+        const int seq_len_v) {
+        const int m_q = batch_size * seq_len_q;
+        const int m_k = batch_size * seq_len_k;
+        const int m_v = batch_size * seq_len_v;
+        const int qk_buf_size = (int)(ceil(batch_size * num_heads * seq_len_q * seq_len_k / 4.)) * 4;
+
+        return m_q * hidden_dims +      // Q
+               m_k * hidden_dims +      // K
+               m_v * hidden_dims +      // V
+               m_q * hidden_dims +     // q_buf
+               m_k * hidden_dims +      // v_buf
+               m_v *hidden_dims +       // v_buf
+               qk_buf_size +            // qk_buf
+               m_q * hidden_dims +      // attn_trans_out
+               m_q * hidden_dims;       // attn_out
+    }
+
+    void unfused_cross_multi_head_attention(DataType_ *workspace,
+                                             const DataType_* from_tensor,
+                                             const DataType_* self_attn_output,
+                                             DataType_* key_cache_,
+                                             DataType_* value_cache_,
+                                             DataType_* decoder_output,
+                                             const DataType_* attr_mask,
+                                             const int local_batch_size,
+                                             const int seq_len_q,
+                                             const int seq_len_k,
+                                             const int seq_len_v,
+                                             const int ite,
+                                             const int max_seq_len,
+                                             const bool is_final)
+    {
+        const DataType_ scalar = 1 / sqrtf(size_per_head_ * 1.0f);
+        const int m_q = local_batch_size * seq_len_q;
+        const int m_k = local_batch_size * seq_len_k;
+        const int m_v = local_batch_size * seq_len_v;
+
+        const int qk_buf_size = (int)(ceil(local_batch_size * t_parallel_param_.local_head_num_ * seq_len_q * seq_len_k / 4.)) * 4;
+
+        DataType_* Q = workspace;
+        DataType_* K = Q + m_q * hidden_units_;
+        DataType_* V = K + m_k * hidden_units_;
+        DataType_* q_buf = V + m_v * hidden_units_;
+        DataType_* k_buf = q_buf + m_q * t_parallel_param_.local_hidden_units_;
+        DataType_* v_buf = k_buf + m_k * t_parallel_param_.local_hidden_units_;
+        DataType_* qk_buf = v_buf + m_v * t_parallel_param_.local_hidden_units_;
+        DataType_* attn_trans_out = qk_buf + qk_buf_size;
+        DataType_* attn_out = attn_trans_out + m_q * t_parallel_param_.local_hidden_units_;
+
+        DataType_ alpha = (DataType_)1.0f, beta = (DataType_)0.0f;
+
+        if(is_fuse_QKV_in_normal_gemm_ == true)
+        {
+            const int n = t_parallel_param_.local_hidden_units_;
+            const int k = hidden_units_;
+            cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
+                                                param_.cublas_handle, 
+                                                CUBLAS_OP_N, CUBLAS_OP_N,
+                                                3*n, m_q, k,
+                                                &alpha,
+                                                param_.self_attention.query_weight.kernel , AType_, 3*n,
+                                                from_tensor, BType_, k,
+                                                &beta,
+                                                Q, CType_, 3*n,
+                                                param_.stream, cublasAlgoMap_,
+                                                cublas_workspace_);
+
+            add_fusedQKV_bias_transpose_kernelLauncher(
+              q_buf, k_buf, v_buf,
+              Q, param_.self_attention.query_weight.bias,
+              local_batch_size, seq_len_q,
+              t_parallel_param_.local_head_num_,
+              size_per_head_, param_.stream);
+        }
+        else
+        {
+            const int n = t_parallel_param_.local_hidden_units_;
+            const int k = hidden_units_;
+            // printf("============ n=%d, m=%d, k=%d \n", n, m_q, k);
+            // print_to_screen(from_tensor, 8, "Step 0: input query", 512);
+            cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
+                                                param_.cublas_handle, 
+                                                CUBLAS_OP_N, CUBLAS_OP_N,
+                                                n, m_q, k,
+                                                &alpha,
+                                                param_.cross_attention.query_weight.kernel , AType_, n,
+                                                from_tensor, BType_, k,
+                                                &beta,
+                                                Q, CType_, n,
+                                                param_.stream, cublasAlgoMap_, 
+                                                cublas_workspace_);
+
+            cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
+                                                param_.cublas_handle, 
+                                                CUBLAS_OP_N, CUBLAS_OP_N,
+                                                n, m_k, k,
+                                                &alpha,
+                                                param_.cross_attention.key_weight.kernel , AType_, n,
+                                                self_attn_output, BType_, k,
+                                                &beta,
+                                                K, CType_, n,
+                                                param_.stream, cublasAlgoMap_,
+                                                cublas_workspace_);            
+
+            cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle, 
+                                                param_.cublas_handle, 
+                                                CUBLAS_OP_N, CUBLAS_OP_N,
+                                                n, m_v, k,
+                                                &alpha,
+                                                param_.cross_attention.value_weight.kernel , AType_, n,
+                                                self_attn_output, BType_, k,
+                                                &beta,
+                                                V, CType_, n,
+                                                param_.stream, cublasAlgoMap_,
+                                                cublas_workspace_);
+            // print_to_screen(Q, 8, "Step 1: from_tensor * Wq", 512);
+
+            add_QKV_bias_transpose_kernelLauncher(q_buf, k_buf, v_buf,
+              Q, param_.cross_attention.query_weight.bias,
+              K, param_.cross_attention.key_weight.bias,
+              V, param_.cross_attention.value_weight.bias,
+              local_batch_size, seq_len_q, seq_len_k,
+              t_parallel_param_.local_head_num_,
+              size_per_head_, param_.stream);
+            
+            // print_to_screen(q_buf, 8, "Step 2: QKV_Bias q_buf", 64);
+            // print_to_screen(k_buf, 8, "Step 2: QKV_Bias k_buf", 64);
+        }
+
+        // !!! need to implement cget_cache_config
+        // if(max_seq_len == -1 || USE_CACHE_BATCH_MAJOR_ATTENTION == 0  )
+        // {
+        //     transpose_4d_kernelLauncher(key_cache_, k_buf,
+        //     local_batch_size,
+        //     seq_len,
+        //     size_per_head_,
+        //     t_parallel_param_.local_hidden_units_,
+        //     t_parallel_param_.local_head_num_,
+        //     param_.request_batch_size,
+        //     ite,
+        //     param_.stream);
+
+        //     transpose_4d_kernelLauncher(value_cache_, v_buf,
+        //     local_batch_size,
+        //     seq_len,
+        //     size_per_head_,
+        //     t_parallel_param_.local_hidden_units_,
+        //     t_parallel_param_.local_head_num_,
+        //     param_.request_batch_size,
+        //     ite,
+        //     param_.stream);
+        // }
+        // else if (USE_CACHE_BATCH_MAJOR_ATTENTION == 1)
+        // {
+        //     // Use batch major
+        //     // put k/v_buf from shape [B, H, L, Dh]
+        //     // to cache [B, H, Dh/x, L, x]  and [B, H, L, Dh/x, x]
+        //     transpose_4d_batch_major_kernelLauncher(key_cache_, value_cache_,
+        //                         k_buf, v_buf,
+        //                         local_batch_size,
+        //                         seq_len,
+        //                         max_seq_len,
+        //                         size_per_head_,
+        //                         t_parallel_param_.local_head_num_,
+        //                         param_.stream);
+        // }
+        // else
+        // {
+        //     printf("[ERROR] Can not decide on the cache config \n");
+        //     exit(-1);
+        // }
+        
+        // print_to_screen(key_cache_, 8, "Step 3: transpose key_cache_", 64);
+        
+        if(is_final) return;
+
+        cublasGemmAlgo_t cublasAlgo = static_cast<cublasGemmAlgo_t>(getAlgoIdFromMap(cublasAlgoMap_, local_batch_size * t_parallel_param_.local_head_num_, seq_len_k, seq_len_q, size_per_head_, std::is_same<float, DataType_>::value ? FLOAT_DATATYPE : HALF_DATATYPE));
+        
+        check_cuda_error(cublasGemmStridedBatchedEx(param_.cublas_handle,
+          CUBLAS_OP_T, CUBLAS_OP_N,
+          seq_len_k, seq_len_q, size_per_head_,
+          &alpha,
+          k_buf, AType_, size_per_head_, seq_len_k * size_per_head_,
+          q_buf, BType_, size_per_head_, seq_len_q * size_per_head_,
+          &beta,
+          qk_buf, CType_, seq_len_k, seq_len_q * seq_len_k,
+          local_batch_size * t_parallel_param_.local_head_num_,
+          computeType_,
+          cublasAlgo));
+
+        // print_to_screen(qk_buf, 3, "Step 4: q*k -> qk_buf", 6);
+
+        attn_softmax_kernelLauncher(qk_buf, 
+                                    attr_mask,
+                                    local_batch_size,
+                                    seq_len_k,
+                                    t_parallel_param_.local_head_num_,
+                                    scalar,
+                                    param_.stream);
+        
+        // print_to_screen(qk_buf, 6, "Step 5: softmax(qk_buf) -> attn(qk_buf)", 6);
+
+        cublasAlgo = static_cast<cublasGemmAlgo_t>(getAlgoIdFromMap(cublasAlgoMap_, local_batch_size * t_parallel_param_.local_head_num_, size_per_head_, seq_len_q, seq_len_v, std::is_same<float, DataType_>::value ? FLOAT_DATATYPE : HALF_DATATYPE));
+        
+        check_cuda_error(cublasGemmStridedBatchedEx(param_.cublas_handle,
+          CUBLAS_OP_N, CUBLAS_OP_N,
+          size_per_head_, seq_len_q, seq_len_v,
+          &alpha,
+          v_buf, AType_, size_per_head_, seq_len_v * size_per_head_,
+          qk_buf, BType_, seq_len_k, seq_len_q * seq_len_k,
+          &beta,
+          attn_trans_out, CType_, size_per_head_, seq_len_q * size_per_head_,
+          local_batch_size * t_parallel_param_.local_head_num_,
+          computeType_,
+          cublasAlgo));
+
+        // print_to_screen(attn_trans_out, 8, "Step 6: qk_buf * v_buf", 64);
+  
+        transpose_kernelLauncher(attn_out, 
+                                 attn_trans_out,
+                                 local_batch_size,
+                                 seq_len_q,
+                                 t_parallel_param_.local_head_num_,
+                                 size_per_head_,
+                                 param_.stream);
+        
+        // print_to_screen(attn_out, 8, "Step 7: updateshape", 512);
+
+        {
+            const int k = t_parallel_param_.local_hidden_units_;
+            const int n = hidden_units_;
+
+            cublasMM_cublasLtMM_wrapper_decoder(param_.cublaslt_handle,
+                                                param_.cublas_handle,
+                                                CUBLAS_OP_N, CUBLAS_OP_N,
+                                                n, m_q, k,
+                                                &alpha,
+                                                param_.cross_attention.attention_output_weight.kernel, AType_, n,
+                                                attn_out, BType_, k,
+                                                &beta,
+                                                decoder_output, CType_, n,
+                                                param_.stream, cublasAlgoMap_,
+                                                cublas_workspace_);
+            // print_to_screen(decoder_output, 8, "Step 8: decoder_output", 512);
+
+            PUSH_RANGE("Transformer/slf_attn/all2all_reduce")
+            all2all_reduce_sum(decoder_output, decoder_output, m_q*n,
                             t_parallel_param_, param_.stream);
             POP_RANGE
         }
