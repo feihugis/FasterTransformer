@@ -7,10 +7,13 @@ import time
 
 from transformers import BertConfig
 from transformers.modeling_bert import BertEncoder
-from utils.ckpt_quantization import checkpoint_quantization
 
-from utils.encoder import EncoderWeights, CustomEncoder
-
+try:
+    from utils.ckpt_quantization import checkpoint_quantization
+    from utils.encoder import EncoderWeights, CustomEncoder
+except:
+    from ckpt_quantization import checkpoint_quantization
+    from encoder import EncoderWeights, CustomEncoder
 
 class NarEncoderWeights(object):
     def __init__(self, layer_num, hidden_dim, weights=None):

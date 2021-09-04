@@ -157,6 +157,7 @@ void add_QKV_bias(T* Q, const T* bias_Q, T* K, const T* bias_K, T* V, const T* b
   const T* bias_ptr;
   
   int seq_len = seq_len_kv;
+  if (seq_len_q > seq_len_kv) { seq_len = seq_len_q; }
   int m = batch_size * seq_len;
   int n = head_num * size_per_head;
 
@@ -165,11 +166,11 @@ void add_QKV_bias(T* Q, const T* bias_Q, T* K, const T* bias_K, T* V, const T* b
 
   if(qkv_id == 0)
   {
+    
+    if (blockIdx.x >= batch_size * seq_len_q) { return; }
     seq_len = seq_len_q;
-    m = batch_size * seq_len;
-    if (blockIdx.x >= m) { return; }
 
-    row_offset = (blockIdx.x * word_per_block % m) * n;
+    // row_offset = (blockIdx.x * word_per_block % m) * n;
 
 
     data_ptr = Q + row_offset;
@@ -178,12 +179,18 @@ void add_QKV_bias(T* Q, const T* bias_Q, T* K, const T* bias_K, T* V, const T* b
   }
   else if(qkv_id == 1)
   {
+    if (blockIdx.x >= (m + batch_size * seq_len_kv)) { return; }
+    seq_len = seq_len_kv;
+
     data_ptr = K + row_offset;
     buf_ptr = k_buf_;
     bias_ptr = bias_K;
   }
   else
   {
+    if (blockIdx.x >= (m*2 + batch_size * seq_len_kv)) { return; }
+    seq_len = seq_len_kv;
+
     data_ptr = V + row_offset;
     buf_ptr = v_buf_;
     bias_ptr = bias_V;
@@ -192,7 +199,7 @@ void add_QKV_bias(T* Q, const T* bias_Q, T* K, const T* bias_K, T* V, const T* b
   int batch_id = (blockIdx.x * word_per_block % m) / seq_len;
   int head_id = threadIdx.x / size_per_head;
   int id_in_head = threadIdx.x % size_per_head;
-  int word_start_id = (blockIdx.x * word_per_block) % seq_len;
+  int word_start_id = (blockIdx.x * word_per_block % m) % seq_len;
 
   T bias = __ldg(&bias_ptr[threadIdx.x]);
 
@@ -433,6 +440,7 @@ void add_QKV_bias_transpose_kernelLauncher(
 
       dim3 grid(m / word_per_block * 3);
       dim3 block(k);
+      // printf("grid = %d, block = %d, batch_size = %d, seq_len_q = %d, seq_len_kv = %d \n", m / word_per_block * 3, k, batch_size, seq_len_q, seq_len_kv);
       add_QKV_bias<T><<<grid, block, 0, stream>>>(Q, bias_Q, K, bias_K, V, bias_V, q_buf, k_buf, v_buf,
         batch_size, seq_len_q, seq_len_kv, head_num, size_per_head, word_per_block);
     }
@@ -625,7 +633,7 @@ void softmax_kernel_v2(T* qk_buf_, const T* attr_mask, const int batch_size, con
     int batch_id = blockIdx.x / head_num / seq_len;
     int seq_id = blockIdx.x % seq_len;
     int qk_offset = blockIdx.x * seq_len;
-    int mask_offset = batch_id * seq_len * seq_len + seq_id * seq_len;
+    // int mask_offset = batch_id * seq_len * seq_len + seq_id * seq_len;
 
     __shared__ float s_sum, s_max;
 
@@ -651,6 +659,44 @@ void softmax_kernel_v2(T* qk_buf_, const T* attr_mask, const int batch_size, con
     __syncthreads();
 
     if(threadIdx.x < seq_len)
+      qk_buf_[threadIdx.x + qk_offset] = (T)(qk_tmp / s_sum);
+}
+
+template <typename T>
+__global__
+void softmax_kernel_v2(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, 
+  const int seq_len_q, const int seq_len_k, const float scalar)
+{
+    int batch_id = blockIdx.x / head_num / seq_len_q;
+    int seq_id = blockIdx.x % seq_len_q;
+    int qk_offset = blockIdx.x * seq_len_k;
+    // int mask_offset = batch_id * seq_len * seq_len + seq_id * seq_len;
+
+    __shared__ float s_sum, s_max;
+
+    // float qk = threadIdx.x < seq_len_k ? (float)qk_buf_[threadIdx.x + qk_offset] : 0.0f;
+    // float mask_val = threadIdx.x < seq_len ? (float)attr_mask[threadIdx.x + mask_offset] : 0.0f;
+      
+    // mask_val = (1.0f - mask_val) * -10000.0f;
+
+    // float tmp = threadIdx.x < seq_len ? (float)(qk * (float)scalar + mask_val) : -1e20f;
+
+    float tmp = threadIdx.x < seq_len_k ? (float)((float)qk_buf_[threadIdx.x + qk_offset] * (float)scalar) : -1e20f;
+    float max_val = blockReduceMax<float>(tmp);
+    if(threadIdx.x == 0)
+      s_max = max_val;
+    __syncthreads();
+
+    float qk_tmp = threadIdx.x < seq_len_k ? __expf((float)(tmp - s_max)) : 0.0f;
+    float sum_val = blockReduceSum<float>(qk_tmp);
+
+    if(threadIdx.x == 0)
+    {
+      s_sum = sum_val + 1e-6f;
+    }
+    __syncthreads();
+
+    if(threadIdx.x < seq_len_k)
       qk_buf_[threadIdx.x + qk_offset] = (T)(qk_tmp / s_sum);
 }
 
@@ -695,7 +741,49 @@ void softmax_kernel_v3(T* qk_buf_, const T* attr_mask, const int batch_size, con
     if(qual)
       qk_buf_[qk_offset] = (T)(qk_tmp * s_mean);
   }
-}  
+}
+
+template <typename T>
+__global__
+void softmax_kernel_v3(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, const int seq_len_q, const int seq_len_k, const T scalar)
+{
+    
+  bool qual = threadIdx.x < seq_len_k;
+  for (int seq_id = blockIdx.x ; seq_id < seq_len_q ; seq_id += gridDim.x){
+    float tmp = -1e20f;
+    int qk_offset;
+    __shared__ float s_mean, s_max;
+    if (qual){
+      qk_offset = ((blockIdx.y*head_num + blockIdx.z)*seq_len_q + seq_id) *seq_len_k + threadIdx.x;
+      // int mask_offset = (blockIdx.y * seq_len_q + seq_id) * seq_len_k + threadIdx.x;
+
+      float qk = static_cast<float>(qk_buf_[qk_offset]);
+      // float mask_val = static_cast<float>(__ldg(&attr_mask[mask_offset]));
+
+      // mask_val = (1.0f - mask_val) * -10000.0f;
+
+      // tmp = qk * static_cast<float>(scalar) + mask_val;
+      tmp = qk * static_cast<float>(scalar);
+    }
+
+    float max_val = blockReduceMax<float>(tmp);
+    if (threadIdx.x == 0){
+      s_max = max_val;
+    }
+    __syncthreads();
+    
+    float qk_tmp = qual ? __expf(tmp - s_max) : 0.0f;
+    float sum_val = blockReduceSum<float>(qk_tmp);
+    if (threadIdx.x == 0){
+      s_mean = sum_val + 1e-6f;
+      s_mean = __fdividef(1.0f, s_mean);
+    }
+    __syncthreads();
+    
+    if(qual)
+      qk_buf_[qk_offset] = (T)(qk_tmp * s_mean);
+  }
+} 
 
 
 //grid = (seq_len/word_per_thread, batch_size, head_num)
@@ -796,6 +884,48 @@ void softmax_kernel_v3_LE32(T* qk_buf_, const T* attr_mask, const int batch_size
   }
 }
 
+template <typename T>
+__global__
+void softmax_kernel_v3_LE32(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, const int seq_len_q, const int seq_len_k, const T scalar)
+{
+  bool qual = threadIdx.x < seq_len_k;
+  for (int seq_id = blockIdx.x ; seq_id < seq_len_q ; seq_id += gridDim.x){
+    int qk_offset;
+    __shared__ float s_mean, s_max;
+    float tmp = -1e20f;
+    if (qual){
+      qk_offset = ((blockIdx.y*head_num + blockIdx.z)*seq_len_q + seq_id) *seq_len_k + threadIdx.x;
+      // int mask_offset = (blockIdx.y * seq_len + seq_id) * seq_len + threadIdx.x;
+
+      float qk = static_cast<float>(qk_buf_[qk_offset]);
+      // float mask_val = static_cast<float>(__ldg(&attr_mask[mask_offset]));
+
+      // mask_val = (1.0f - mask_val) * -10000.0f;
+
+      // tmp = static_cast<float>(qk) * static_cast<float>(scalar) + mask_val;
+      tmp = static_cast<float>(qk) * static_cast<float>(scalar);
+    }
+    float max_val = warpReduceMax<float>(tmp);
+
+    if (threadIdx.x == 0){
+      s_max = max_val;
+    }
+    __syncthreads();
+
+    tmp = qual ? __expf(tmp - s_max) : 0.0f;
+    float sum_val = warpReduceSum<float>(tmp);
+
+    if (threadIdx.x == 0){
+      s_mean = sum_val + 1e-6f;
+      s_mean = __fdividef(1.0f, s_mean);
+    }
+    __syncthreads();
+
+    if(qual)
+      qk_buf_[qk_offset] = (T)(tmp * s_mean);
+  }
+}
+
 template<typename T>
 void attn_softmax_kernelLauncher(
   T* buffer,
@@ -852,6 +982,74 @@ void attn_softmax_kernelLauncher(
       else{
         block.x = (seq_len + 31)/32*32;
         softmax_kernel_v3<T><<<grid, block, 0, stream>>>(buffer, attr_mask, batch_size, head_num, seq_len, scalar);
+      }
+    }
+    grid.x = grid.y = grid.z = 1;
+  }
+}
+
+template<typename T>
+void attn_softmax_kernelLauncher(
+  T* buffer,
+  const T* attr_mask,
+  const int batch_size,
+  const int seq_len_q,
+  const int seq_len_k,
+  const int head_num,
+  const T scalar,
+  cudaStream_t stream)
+{
+  dim3 grid, block;
+  //deal with odd seq_len
+  if (seq_len_q % 2 != 0){
+    if(seq_len_k <= 32)
+      block.x = 32;
+    else if(seq_len_k > 32 && seq_len_k <= 64)
+      block.x = 64;
+    else if(seq_len_k > 64 && seq_len_k <= 128)
+      block.x = 128;
+    else if(seq_len_k > 128 && seq_len_k <= 256)
+      block.x = 256;
+    else if(seq_len_k > 256 && seq_len_k <= 512)
+      block.x = 512;
+    else
+      block.x = 1024;
+
+    if(batch_size * head_num <= 120)
+    {
+      grid.x = batch_size * head_num * seq_len_q;
+      softmax_kernel_v2<T><<<grid, block, 0, stream>>>(buffer, attr_mask, batch_size, head_num, seq_len_q, seq_len_k, scalar);
+    }
+    else
+    {
+      printf("softmax for this case (> 120) is not supported yet.");
+      // exit(-1);
+      grid.x = batch_size * head_num;
+      softmax_kernel<T><<<grid, block, 0, stream>>>(buffer, attr_mask, batch_size, head_num, seq_len_q, scalar);
+    }
+  }
+  //deal with even seq_len 
+  else{
+    grid.x = seq_len_q;
+    if (batch_size * head_num > 360)
+      grid.x = ceil(float(seq_len_q)/32.0f);
+    grid.y = batch_size;
+    grid.z = head_num;
+    if (seq_len_k <= 32){
+      block.x = 32;
+      softmax_kernel_v3_LE32<T><<<grid, block, 0, stream>>>(buffer, attr_mask, batch_size, head_num, seq_len_q, seq_len_k, scalar);
+    }
+    else{
+      if (sizeof(T) == 2){
+        // TODO: support half type
+        printf("softmax for half type is not supported yet.");
+        // exit(-1);
+        block.x = (seq_len_k/2 + 31)/32*32;
+        softmax_kernel_v3<<<grid, block, 0, stream>>>(buffer, attr_mask, batch_size, head_num, seq_len_q, scalar);
+      }
+      else{
+        block.x = (seq_len_k + 31)/32*32;
+        softmax_kernel_v3<T><<<grid, block, 0, stream>>>(buffer, attr_mask, batch_size, head_num, seq_len_q, seq_len_k, scalar);
       }
     }
     grid.x = grid.y = grid.z = 1;
@@ -1025,6 +1223,26 @@ template void attn_softmax_kernelLauncher(
     const half* attr_mask,
     const int batch_size,
     const int seq_len,
+    const int head_num,
+    const half scalar,
+    cudaStream_t stream);
+
+template void attn_softmax_kernelLauncher(
+    float* buffer,
+    const float* attr_mask,
+    const int batch_size,
+    const int seq_len_q,
+    const int seq_len_k,
+    const int head_num,
+    const float scalar,
+    cudaStream_t stream);
+    
+template void attn_softmax_kernelLauncher(
+    half* buffer,
+    const half* attr_mask,
+    const int batch_size,
+    const int seq_len_q,
+    const int seq_len_k,
     const int head_num,
     const half scalar,
     cudaStream_t stream);

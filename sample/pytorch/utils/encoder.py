@@ -19,8 +19,10 @@ import torch
 
 from transformers import BertConfig
 from transformers.modeling_bert import BertEncoder
-from .ckpt_quantization import checkpoint_quantization
-
+try:
+    from .ckpt_quantization import checkpoint_quantization
+except:
+    from ckpt_quantization import checkpoint_quantization
 
 class EncoderWeights(object):
     def __init__(self, layer_num, hidden_dim, weights=None):

@@ -82,6 +82,17 @@ void attn_softmax_kernelLauncher(
   cudaStream_t stream);
 
 template <typename T>
+void attn_softmax_kernelLauncher(
+  T* buffer,
+  const T* attr_mask,
+  const int batch_size,
+  const int seq_len_q,
+  const int seq_len_k,
+  const int head_num,
+  const T scalar,
+  cudaStream_t stream);
+
+template <typename T>
 void transpose_kernelLauncher(
   T* dst,
   T* src,

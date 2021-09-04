@@ -237,16 +237,21 @@ void print_to_screen(const T *result, const int size, const char* comment, int C
 }
 
 template <typename T>
-void print_to_screen(const T *result, const int size, const char* comment, int COL, int ROW)
+void print_to_screen(const T *result, const int left_ele_num, const char* comment, int COL, int ROW)
 {
   printf("============%s\n", comment);
-  T *tmp = (T *)malloc(sizeof(T) * 1 * 3 * 8 * 64);
-  check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * 1 * 3 * 8 * 64, cudaMemcpyDeviceToHost));
+  T *tmp = (T *)malloc(sizeof(T) * COL * ROW);
+  check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * COL * ROW, cudaMemcpyDeviceToHost));
   for (int row = 0; row < ROW; ++row) {
-    for (int i = 0 + COL * row; i < COL * row + size; ++i)
+    printf("[%d]", row);
+    for (int i = 0 + COL * row; i < COL * row + left_ele_num; ++i)
       // printf("%d, %f\n", i, (float)tmp[i]);
       printf("%f(%d), ", (float)tmp[i], i - COL * row);
-    printf(" ...... \n\n");
+    printf(" ...... ");
+    for (int i = left_ele_num; i > 0; --i) {
+      printf("%f(%d), ", (float)tmp[COL*(row + 1)-i], COL - i);
+    }
+    printf("\n\n");
   }
   free(tmp);
 }

@@ -6,6 +6,8 @@ from utils.decoder import CustomDecoder, ONMTDecoder, init_op_cache, init_onmt_c
 
 import os
 print(f"pid: {os.getpid()} \n")
+
+torch.set_printoptions(linewidth=400, edgeitems=3, precision=6, profile="default")
 class DecoderWeights(object):
     def __init__(self, layer_num, hidden_dim, path='/model/model_checkpoint/checkpoint_best.pt'):
         self.layer_num = layer_num
@@ -87,13 +89,13 @@ class DecoderWeights(object):
                 self.w[i][j] = self.w[i][j].half()
 
 def run():
-    layer_num = 1
+    layer_num = 6
     head_num = 8
     head_size = 64
     hidden_dim = 512
     batch_size = 1
     beam_width = 1
-    mem_seq_len = 6
+    mem_seq_len = 16
     max_seq_len = 16
     decoding_max_seq_len = 32
 
@@ -120,29 +122,30 @@ def run():
         self_cache, mem_cache = init_op_cache(layer_num, batch_size, beam_width, max_seq_len, decoding_max_seq_len, head_num, head_size, hidden_dim, is_fp16)
         
         input_seq_len = 6
-        # for input_seq_len in range(9, 10, 1):
-        for input_seq_len in range(1, 10, 1):
+        for input_seq_len in range(1, 17, 1):
+            print(f"\n------------ Test input_seq_len = {input_seq_len}")
             inp = torch.empty(batch_size, input_seq_len, hidden_dim).cuda()
             mem = torch.empty(batch_size, mem_seq_len, hidden_dim).cuda()
             torch.nn.init.uniform_(inp, -1, 1)
             torch.nn.init.uniform_(mem, -1, 1)
+
+            cache = init_onmt_cache(layer_num, mem)
 
             torch.cuda.synchronize()
             t1 = time.time()
             ft_output, self_cache, mem_cache = custom_decoder(inp, mem, input_seq_len, mem_seq_len, self_cache, mem_cache, 1)
             torch.cuda.synchronize()
             t2 = time.time()
-            print(f"$$$$$$$$$$$$ FT time: {t2 - t1}: {ft_output.shape} \n", ft_output[:, :, :], '\n')
+            print(f"FT time: {t2 - t1}: {ft_output.shape}")
             
             torch.cuda.synchronize()
             t3 = time.time()
-            cache = init_onmt_cache(layer_num, mem)
             onmt_output = onmt_decoder(inp, mem, src_pad_mask, cache, 0)
             torch.cuda.synchronize()
             t4 = time.time()
-            print(f"$$$$$$$$$$$$ ONMT time: {t4 - t3}: {onmt_output.shape} \n", onmt_output[:, :, :], '\n')
+            print(f"ONMT time: {t4 - t3}: {onmt_output.shape}")
 
-            diff = ft_output - onmt_output
+            diff = torch.abs(ft_output - onmt_output)
             print('Mean diff: {}'.format(torch.mean(diff)))
             print('Max diff:  {}'.format(torch.max(diff)))
             print('Min diff:  {}'.format(torch.min(diff)))
