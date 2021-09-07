@@ -2,7 +2,10 @@ import time
 import torch
 
 from onmt.utils.misc import sequence_mask
-from utils.decoder import CustomDecoder, ONMTDecoder, init_op_cache, init_onmt_cache
+try:
+    from utils.decoder import CustomDecoder, ONMTDecoder, init_op_cache, init_onmt_cache
+except:
+    from decoder import CustomDecoder, ONMTDecoder, init_op_cache, init_onmt_cache
 
 import os
 print(f"pid: {os.getpid()} \n")
