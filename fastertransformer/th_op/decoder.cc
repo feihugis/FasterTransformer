@@ -115,7 +115,9 @@ Tensor FasterTransformerDecoder::forward(Tensor input, Tensor memory, int64_t in
   int seq_len = mem_size[1];
   int mem_hidden_dim = mem_size[2];
   auto output = torch::empty_like(input);
-  ftdecoder->forward(batch_size, seq_len, mem_hidden_dim, step, input, memory, input_seq_len, memory_seq_len, self_cache, mem_cache, output);
+  ftdecoder->forward(
+    batch_size, seq_len, mem_hidden_dim, step, input, memory, input_seq_len,
+    memory_seq_len, self_cache, mem_cache, output);
   return output;
 }
 

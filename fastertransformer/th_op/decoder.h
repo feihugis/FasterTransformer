@@ -84,14 +84,16 @@ public:
   }
 
   void forward(int batch_size, int seq_len, int mem_hidden_dim, int step,
-               Tensor& input, Tensor& memory, const int64_t input_seq_len, const int64_t memory_seq_len, std::vector<Tensor>& self_cache, Tensor& mem_cache, Tensor& output) override
+               Tensor& input, Tensor& memory, const int64_t input_seq_len, 
+               const int64_t memory_seq_len, std::vector<Tensor>& self_cache,
+               Tensor& mem_cache, Tensor& output) override
   {
     auto stream = at::cuda::getCurrentCUDAStream().stream();
     check_cuda_error(cublasSetStream(decoder_params.cublas_handle, stream));
     decoder_params.stream = stream;
     decoder_params.request_batch_size = batch_size;
     decoder_params.request_max_mem_seq_len = seq_len;
-    fastertransformer::Allocator<AllocatorType::TH> allocator;
+    // fastertransformer::Allocator<AllocatorType::TH> allocator;
     step = step + 1;
 
     T* output_ptr = get_ptr<T>(output);
@@ -110,16 +112,32 @@ public:
     T* V_mem_cache = mem_cache_ptr + batch_size * seq_len * _head_num * _head_size;
     decoder->set_max_batch_size(batch_size);
     const int decoder_buffer_size = decoder->getWorkspaceSize() * sizeof(T);
-    T* decoder_buffer = (T*)allocator.malloc(((sizeof(T) == sizeof(half)) ? CUBLAS_WORKSPACE_SIZE : 0) + decoder_buffer_size);
-    void *cublas_workspace = nullptr;
-    if (sizeof(T) == sizeof(half))
-    {
-      cublas_workspace = (void*)((char*)decoder_buffer + decoder_buffer_size);
-    }
+    if (!is_initialize) {
+      T* decoder_buffer = (T*)allocator.malloc(((sizeof(T) == sizeof(half)) ? CUBLAS_WORKSPACE_SIZE : 0) + decoder_buffer_size);
+      // void *cublas_workspace = nullptr;
+      if (sizeof(T) == sizeof(half))
+      {
+        cublas_workspace = (void*)((char*)decoder_buffer + decoder_buffer_size);
+      }
 
-    decoder->initialize(decoder_params, decoder_buffer, cublas_workspace);
-    decoder->forward(input_ptr, memory_ptr, K_cache, V_cache, K_mem_cache, V_mem_cache, input_seq_len, memory_seq_len, output_ptr, step, decoder_max_seq_len, true);
-    allocator.free(decoder_buffer);
+      decoder->initialize(decoder_params, decoder_buffer, cublas_workspace);
+      is_initialize = true;
+    }
+    
+    decoder->forward(
+      input_ptr, 
+      memory_ptr,
+      /*K_cache*/nullptr,
+      /*V_cache*/nullptr,
+      K_mem_cache,
+      V_mem_cache,
+      input_seq_len,
+      memory_seq_len,
+      output_ptr,
+      step,
+      decoder_max_seq_len,
+      true);
+    // allocator.free(decoder_buffer);
   }
 
 private:
@@ -131,6 +149,10 @@ private:
   cublasLtHandle_t _cublasLtHandle;
   DecoderInitParam<T> decoder_params;
   OpenDecoder<THTraits<T>::OpType>* decoder;
+  fastertransformer::Allocator<AllocatorType::TH> allocator;
+  bool is_initialize = false;
+  void *cublas_workspace = nullptr;
+  T* decoder_buffer;
 };
 
 class FasterTransformerDecoder : public torch::jit::CustomClassHolder {
