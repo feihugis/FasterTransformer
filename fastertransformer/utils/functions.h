@@ -19,6 +19,7 @@
 
 #pragma once
 #include "fastertransformer/utils/common.h"
+#include "fastertransformer/gemm_test/decoder_gemm_func.h"
 #include <mutex>
 
 namespace fastertransformer{
@@ -513,7 +514,7 @@ void readAlgoFromConfig(T& cublasAlgoMap, int num=-1)
     printf("[ERROR] fgets fail at %s:%d \n", __FILE__, __LINE__);
     exit(-1);
   }
-  while(fscanf(fd,"%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n", &dataType, &batchCount2, &m2, &n2, &k2, &algoId, &customOption, &tile, &splitK_val, &swizzle, &reductionScheme, &workspaceSize, &stages, &exec_time)!=EOF)
+  while(fscanf(fd,"%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n", &dataType, &batchCount2, &n2, &m2, &k2, &algoId, &customOption, &tile, &splitK_val, &swizzle, &reductionScheme, &workspaceSize, &stages, &exec_time)!=EOF)
   {
     if (dataType != FLOAT_DATATYPE && dataType != HALF_DATATYPE && dataType != INT8_DATATYPE)
     {
@@ -573,6 +574,9 @@ void cublasMM_cublasLtMM_wrapper_decoder(cublasLtHandle_t ltHandle, cublasHandle
     else
       using_cublasLt = false;
   }
+  // else {
+    //  generate_gemm_config<T>(batchCount, m, n, k);
+  // }
 
 #ifndef NDEBUG
   if(findAlgo == 0)
@@ -670,7 +674,6 @@ void cublasMM_cublasLtMM_wrapper_decoder(cublasLtHandle_t ltHandle, cublasHandle
       cublasAlgo = cublasAlgoMap[mark].algoId;
 
     cudaDataType_t computeType = is_fp16 ? CUDA_R_16F : CUDA_R_32F;
-
     check_cuda_error(cublasGemmEx(handle, transa, transb, m, n, k, alpha,
                                   A, Atype, lda,
                                   B, Btype, ldb,

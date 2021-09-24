@@ -68,7 +68,7 @@ target_link_libraries(encoder PUBLIC -lcublas -lcublasLt -lcudart -lcurand cuda_
 add_library(decoder STATIC ${decoder_kernel_files})
 set_property(TARGET decoder PROPERTY POSITION_INDEPENDENT_CODE  ON)
 set_property(TARGET decoder PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
-target_link_libraries(decoder PUBLIC -lcublas -lcudart -lcurand cuda_kernels attention_kernels transformer_kernels nccl_utils nvtx_utils)
+target_link_libraries(decoder PUBLIC -lcublas -lcudart -lcurand cuda_kernels attention_kernels transformer_kernels decoder_gemm_func nccl_utils nvtx_utils)
 
 add_library(online_softmax_beamsearch STATIC ${online_softmax_beamsearch_kernel_files})
 set_property(TARGET online_softmax_beamsearch PROPERTY POSITION_INDEPENDENT_CODE  ON)

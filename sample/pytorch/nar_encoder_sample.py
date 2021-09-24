@@ -292,7 +292,7 @@ def run():
     int8_mode=0,
     remove_padding=False,
     allow_gemm_test=True,
-    path='/datadrive/fhu/github/FasterTransformer/build_15//lib/libpyt_fastertransformer.so')
+    path='lib/libpyt_fastertransformer.so')
     # custom_encoder = torch.jit.script(custom_encoder)
 
     hf_encoder = HuggingFaceEncoder(

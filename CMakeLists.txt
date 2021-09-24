@@ -270,6 +270,7 @@ add_library(transformer-static STATIC
   $<TARGET_OBJECTS:trt_fused_multi_head_attention>
   $<TARGET_OBJECTS:encoder_gemm_func>
   $<TARGET_OBJECTS:encoder_igemm_func>
+  $<TARGET_OBJECTS:decoder_gemm_func>
   $<TARGET_OBJECTS:decoder>
   $<TARGET_OBJECTS:decoding>
   $<TARGET_OBJECTS:topk>
@@ -289,6 +290,7 @@ add_library(transformer-shared SHARED
   $<TARGET_OBJECTS:trt_fused_multi_head_attention>
   $<TARGET_OBJECTS:encoder_gemm_func>
   $<TARGET_OBJECTS:encoder_igemm_func>
+  $<TARGET_OBJECTS:decoder_gemm_func>
   $<TARGET_OBJECTS:decoder>
   $<TARGET_OBJECTS:decoding>
   $<TARGET_OBJECTS:topk>

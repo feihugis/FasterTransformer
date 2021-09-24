@@ -39,6 +39,7 @@
 
 #include "fastertransformer/gemm_test/encoder_gemm_func.h"
 #include "fastertransformer/gemm_test/encoder_igemm_func.h"
+#include "fastertransformer/gemm_test/decoder_gemm_func.h"
 
 struct AbstractParam
 {

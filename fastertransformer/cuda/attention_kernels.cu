@@ -630,6 +630,7 @@ __global__
 void softmax_kernel_v2(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, 
   const int seq_len, const float scalar)
 {
+    // printf("run softmax_kernel_v2(...) \n");
     int batch_id = blockIdx.x / head_num / seq_len;
     int seq_id = blockIdx.x % seq_len;
     int qk_offset = blockIdx.x * seq_len;
@@ -667,6 +668,7 @@ __global__
 void softmax_kernel_v2(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, 
   const int seq_len_q, const int seq_len_k, const float scalar)
 {
+    // printf("run softmax_kernel_v2(671) \n");
     int batch_id = blockIdx.x / head_num / seq_len_q;
     int seq_id = blockIdx.x % seq_len_q;
     int qk_offset = blockIdx.x * seq_len_k;
@@ -706,6 +708,7 @@ template <typename T>
 __global__
 void softmax_kernel_v3(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, const int seq_len, const T scalar)
 {
+  printf("run softmax_kernel_v3(711) \n");
     
   bool qual = threadIdx.x < seq_len;
   for (int seq_id = blockIdx.x ; seq_id < seq_len ; seq_id += gridDim.x){
@@ -795,6 +798,7 @@ void softmax_kernel_v3(half* qk_buf_, const half* attr_mask,
                       const int batch_size, const int head_num, 
                       const int seq_len, const half scalar)
 {
+  printf("run softmax_kernel_v3(801) \n");
   int threadIdx2 = threadIdx.x << 1;
   bool qual = threadIdx2 < seq_len;
   half2* qk_buf_half2Ptr = (half2*) qk_buf_;
@@ -846,6 +850,7 @@ template <typename T>
 __global__
 void softmax_kernel_v3_LE32(T* qk_buf_, const T* attr_mask, const int batch_size, const int head_num, const int seq_len, const T scalar)
 {
+  // printf("run softmax_kernel_v3_LE32(...) \n");
   bool qual = threadIdx.x < seq_len;
   for (int seq_id = blockIdx.x ; seq_id < seq_len ; seq_id += gridDim.x){
     int qk_offset;
@@ -856,12 +861,12 @@ void softmax_kernel_v3_LE32(T* qk_buf_, const T* attr_mask, const int batch_size
       int mask_offset = (blockIdx.y * seq_len + seq_id) * seq_len + threadIdx.x;
 
       float qk = static_cast<float>(qk_buf_[qk_offset]);
-      // float mask_val = static_cast<float>(__ldg(&attr_mask[mask_offset]));
+      float mask_val = attr_mask != NULL? static_cast<float>(__ldg(&attr_mask[mask_offset])) : 0.0f; // handle the null attr_mask in the decoder; but this function is also shared with encoder which has the mask. TODO: a better solution to support mask in decoder
 
-      // mask_val = (1.0f - mask_val) * -10000.0f;
+      mask_val = (1.0f - mask_val) * -10000.0f;
 
-      // tmp = static_cast<float>(qk) * static_cast<float>(scalar) + mask_val;
-      tmp = static_cast<float>(qk) * static_cast<float>(scalar);
+      tmp = static_cast<float>(qk) * static_cast<float>(scalar) + mask_val;
+      // tmp = static_cast<float>(qk) * static_cast<float>(scalar);
     }
     float max_val = warpReduceMax<float>(tmp);
 

@@ -104,7 +104,6 @@ def run():
 
     step = 1
     path = '/model/model_checkpoint/checkpoint_best.pt'
-    # path = None
     is_fp16 = False
 
     mem_seq_lens = torch.randint(mem_seq_len, mem_seq_len + 1, (batch_size,), dtype=torch.int32).cuda()
@@ -117,7 +116,8 @@ def run():
     onmt_decoder.eval()
 
     weights.to_cuda()
-    custom_decoder = CustomDecoder(layer_num, head_num, head_size, hidden_dim, weights, is_fp16)
+    custom_decoder = CustomDecoder(layer_num, head_num, head_size, hidden_dim, weights, is_fp16, path='lib/libpyt_fastertransformer.so')
+    custom_decoder = torch.jit.script(custom_decoder)
 
 
     with torch.no_grad():

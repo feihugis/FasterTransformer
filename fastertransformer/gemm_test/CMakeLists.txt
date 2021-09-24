@@ -21,11 +21,22 @@ set(encoder_igemm_func_files
   encoder_igemm_func.cc
 )
 
+set(decoder_gemm_func_files
+  decoder_gemm_func.cc)
+
+
 add_library(encoder_gemm_func STATIC ${encoder_gemm_func_files})
 target_link_libraries(encoder_gemm_func PUBLIC -lcublas -lcudart)
 set_property(TARGET encoder_gemm_func PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET encoder_gemm_func PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+
 add_library(encoder_igemm_func STATIC ${encoder_igemm_func_files})
 target_link_libraries(encoder_igemm_func PUBLIC -lcublas -lcublasLt -lcudart)
 set_property(TARGET encoder_igemm_func PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET encoder_gemm_func PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+
+
+add_library(decoder_gemm_func STATIC ${decoder_gemm_func_files})
+target_link_libraries(decoder_gemm_func PUBLIC -lcublas -lcublasLt -lcudart)
+set_property(TARGET decoder_gemm_func PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET decoder_gemm_func PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
