@@ -16,6 +16,15 @@ project(FasterTransformer LANGUAGES CXX CUDA)
 
 find_package(CUDA 10.1 REQUIRED)
 
+# set(PYTHON_LIBRARY_DIR "/opt/conda/lib/python3.8/site-packages")
+# set(PYTHON_EXECUTABLE "/opt/conda/bin/python")
+# set(pybind11_DIR "/datadrive/fhu/github/FasterTransformer/")
+# include(pybind11Config.cmake)
+
+set(PYBIND11_DIR "/opt/conda/lib/python3.8/site-packages/pybind11")
+list(APPEND CMAKE_PREFIX_PATH ${PYBIND11_DIR})
+find_package(pybind11 REQUIRED)
+
 option(BUILD_TF "Build in TensorFlow mode" OFF)
 option(BUILD_PYT "Build in PyTorch TorchScript class mode" OFF)
 option(BUILD_GPT "Build project with gpt" ON) # TODO Set default to OFF
@@ -73,7 +82,7 @@ endif()
 
 # setting compiler flags
 set(CMAKE_C_FLAGS    "${CMAKE_C_FLAGS}")
-set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0 -fabi-version=11")
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}  -Xcompiler -Wall -ldl")
 
 # if (SM STREQUAL 80 OR
