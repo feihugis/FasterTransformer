@@ -25,6 +25,10 @@ set(gpt_gemm_files
   gpt_gemm.cc
 )
 
+set(tune_gemm_files
+  tune_gemm.cc
+)
+
 add_executable(encoder_gemm ${encoder_gemm_files})
 target_link_libraries(encoder_gemm PUBLIC -lcublas -lcublasLt -lcudart encoder_gemm_func encoder_igemm_func)
 
@@ -33,3 +37,6 @@ target_link_libraries(decoding_gemm PUBLIC -lcublas -lcublasLt -lcudart)
 
 add_executable(gpt_gemm ${gpt_gemm_files})
 target_link_libraries(gpt_gemm PUBLIC -lcublas -lcublasLt -lcudart)
+
+add_executable(tune_gemm ${tune_gemm_files})
+target_link_libraries(tune_gemm PUBLIC -lcublas -lcublasLt -lcudart decoder_gemm_func)

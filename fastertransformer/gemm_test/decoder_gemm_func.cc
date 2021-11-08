@@ -505,7 +505,7 @@ void generate_gemm_config(int batchcount, int m, int n, int k, bool is_append)
   cudaDataType_t CType;
   cudaDataType_t computeType;
   int startAlgo, endAlgo;
-  const int ites = 100;
+  const int ites = 500;
   struct timeval start, end;
   
   if(sizeof(T) == sizeof(float)){
@@ -546,7 +546,54 @@ void generate_gemm_config(int batchcount, int m, int n, int k, bool is_append)
     
     float exec_time = 99999.0f;
     int fast_algo = 0;
-    for(int algo = startAlgo; algo <= endAlgo; algo++)
+    static const cublasGemmAlgo_t algos[] = {
+        CUBLAS_GEMM_DFALT,
+        CUBLAS_GEMM_DEFAULT,
+        CUBLAS_GEMM_ALGO0,
+        CUBLAS_GEMM_ALGO1,
+        CUBLAS_GEMM_ALGO2,
+        CUBLAS_GEMM_ALGO3,
+        CUBLAS_GEMM_ALGO4,
+        CUBLAS_GEMM_ALGO5,
+        CUBLAS_GEMM_ALGO6,
+        CUBLAS_GEMM_ALGO7,
+        CUBLAS_GEMM_ALGO8,
+        CUBLAS_GEMM_ALGO9,
+        CUBLAS_GEMM_ALGO10,   
+        CUBLAS_GEMM_ALGO11,
+        CUBLAS_GEMM_ALGO12,        
+        CUBLAS_GEMM_ALGO13,        
+        CUBLAS_GEMM_ALGO14,        
+        CUBLAS_GEMM_ALGO15,        
+        CUBLAS_GEMM_ALGO16,        
+        CUBLAS_GEMM_ALGO17,       
+        CUBLAS_GEMM_ALGO18, //sliced 32x32    
+        CUBLAS_GEMM_ALGO19, //sliced 64x32     
+        CUBLAS_GEMM_ALGO20, //sliced 128x32     
+        CUBLAS_GEMM_ALGO21, //sliced 32x32  -splitK      
+        CUBLAS_GEMM_ALGO22, //sliced 64x32  -splitK      
+        CUBLAS_GEMM_ALGO23, //sliced 128x32 -splitK      
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP,        
+        CUBLAS_GEMM_DFALT_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO0_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO1_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO2_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO3_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO4_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO5_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO6_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO7_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO8_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO9_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO10_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO11_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO12_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO13_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO14_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO15_TENSOR_OP        
+    };
+
+    for(const auto algo : algos)
     {
       cublasStatus_t status;
       cudaDeviceSynchronize();
@@ -562,8 +609,7 @@ void generate_gemm_config(int batchcount, int m, int n, int k, bool is_append)
                                 &beta, 
                                 d_C, CType, n, 
                                 computeType, 
-                                static_cast<cublasGemmAlgo_t>(algo));
-        // }
+                                algo);
       }
       cudaDeviceSynchronize();
       gettimeofday(&end, NULL);

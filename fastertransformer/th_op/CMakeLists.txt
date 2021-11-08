@@ -22,6 +22,8 @@ set(fastertransformer_ths_files
   utils.cu
   weight_quantize_op.cc
   topk.cc
+  linear.cc
+  fused_add_layer_norm.cc
 )
 
 add_definitions(-DTORCH_CUDA=1)

@@ -20,7 +20,9 @@
 #include "fastertransformer/th_op/encoder.h"
 #include "fastertransformer/th_op/decoder.h"
 #include "fastertransformer/th_op/decoding.h"
+#include "fastertransformer/th_op/fused_add_layer_norm.h"
 #include "fastertransformer/th_op/gpt.h"
+#include "fastertransformer/th_op/linear.h"
 #include "fastertransformer/th_op/topk.h"
 #include "fastertransformer/th_op/weight_quantize_op.h"
 
@@ -156,3 +158,7 @@ static auto weight_quantize =
 
 static auto topk =
   torch::RegisterOperators("fastseq::topk", &torch_ext::topK);
+
+static auto linear = torch::RegisterOperators("fastseq::linear", &torch_ext::linear);
+
+static auto fused_add_layer_norm = torch::RegisterOperators("fastseq::fused_add_layer_norm", &torch_ext::fused_add_layer_norm);

@@ -15,6 +15,8 @@ cmake_minimum_required(VERSION 3.8)
 add_subdirectory(cuda)
 add_subdirectory(utils)
 add_subdirectory(gemm_test)
+add_subdirectory(jit)
+
 if(BUILD_TF)
   add_subdirectory(tf_op)
 endif()
