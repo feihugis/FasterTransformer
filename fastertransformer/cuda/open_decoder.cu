@@ -205,6 +205,7 @@ void masked_attention_kernel_opt(
     if (lane_id == 0)
     {
       logits[ite] = qk; 
+      printf("[b.%d, t.%d] qk_%d: %f \n", blockIdx.x, threadIdx.x, ite, qk);
     }
   }
   __syncthreads();
@@ -380,6 +381,7 @@ void masked_attention_dispatch(
   T* context_buf, const bool* finished, int max_batch_size, int inference_batch_size,
   int head_num, int size_per_head, const int step, const int max_seq_len, cudaStream_t stream)
 {
+  // printf("++++++++++++ max_seq_len: %d \n", max_seq_len);
   if (max_seq_len < 0) {
     const int block_sz = ATTENTION_BLOCK_SIZE;
     T scalar = (T)(1.f / sqrtf(size_per_head * 1.0f));

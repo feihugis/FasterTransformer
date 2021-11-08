@@ -16,6 +16,15 @@ project(FasterTransformer LANGUAGES CXX CUDA)
 
 find_package(CUDA 10.1 REQUIRED)
 
+# set(PYTHON_LIBRARY_DIR "/opt/conda/lib/python3.8/site-packages")
+# set(PYTHON_EXECUTABLE "/opt/conda/bin/python")
+# set(pybind11_DIR "/datadrive/fhu/github/FasterTransformer/")
+# include(pybind11Config.cmake)
+
+set(PYBIND11_DIR "/opt/conda/lib/python3.8/site-packages/pybind11")
+list(APPEND CMAKE_PREFIX_PATH ${PYBIND11_DIR})
+find_package(pybind11 REQUIRED)
+
 option(BUILD_TF "Build in TensorFlow mode" OFF)
 option(BUILD_PYT "Build in PyTorch TorchScript class mode" OFF)
 option(BUILD_GPT "Build project with gpt" ON) # TODO Set default to OFF
@@ -37,9 +46,9 @@ if(BUILD_PYT)
     if($ENV{NVIDIA_PYTORCH_VERSION} VERSION_LESS "20.03")
       message(FATAL_ERROR "NVIDIA PyTorch image is too old for TorchScript mode.")
     endif()
-    if($ENV{NVIDIA_PYTORCH_VERSION} VERSION_EQUAL "20.03")
-      add_definitions(-DLEGACY_THS=1)
-    endif()
+    #if($ENV{NVIDIA_PYTORCH_VERSION} VERSION_EQUAL "20.03")
+    #  add_definitions(-DLEGACY_THS=1)
+    #endif()
   endif()
 endif()
 
@@ -73,7 +82,7 @@ endif()
 
 # setting compiler flags
 set(CMAKE_C_FLAGS    "${CMAKE_C_FLAGS}")
-set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0 -fabi-version=11")
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}  -Xcompiler -Wall -ldl")
 
 # if (SM STREQUAL 80 OR
@@ -270,6 +279,7 @@ add_library(transformer-static STATIC
   $<TARGET_OBJECTS:trt_fused_multi_head_attention>
   $<TARGET_OBJECTS:encoder_gemm_func>
   $<TARGET_OBJECTS:encoder_igemm_func>
+  $<TARGET_OBJECTS:decoder_gemm_func>
   $<TARGET_OBJECTS:decoder>
   $<TARGET_OBJECTS:decoding>
   $<TARGET_OBJECTS:topk>
@@ -289,6 +299,7 @@ add_library(transformer-shared SHARED
   $<TARGET_OBJECTS:trt_fused_multi_head_attention>
   $<TARGET_OBJECTS:encoder_gemm_func>
   $<TARGET_OBJECTS:encoder_igemm_func>
+  $<TARGET_OBJECTS:decoder_gemm_func>
   $<TARGET_OBJECTS:decoder>
   $<TARGET_OBJECTS:decoding>
   $<TARGET_OBJECTS:topk>

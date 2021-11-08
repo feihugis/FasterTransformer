@@ -383,7 +383,8 @@ public:
                           K_cache_[0] + layer * cache_size,
                           V_cache_[0] + layer * cache_size,
                           K_mem_cache_[layer], V_mem_cache_[layer],
-                          decoding_params.memory_sequence_length, from_tensor_[out_id], step, args_.seq_len_,
+                          0, 0,// decoding_params.memory_sequence_length, 
+                          from_tensor_[out_id], step, args_.seq_len_,
                           true, finished_buf_);
 
 #ifndef NDEBUG

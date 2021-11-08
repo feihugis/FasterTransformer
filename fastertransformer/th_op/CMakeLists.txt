@@ -21,6 +21,9 @@ set(fastertransformer_ths_files
   gpt.cc
   utils.cu
   weight_quantize_op.cc
+  topk.cc
+  linear.cc
+  fused_add_layer_norm.cc
 )
 
 add_definitions(-DTORCH_CUDA=1)
@@ -30,5 +33,5 @@ if(BUILD_PYT)
   add_library(${LIB_NAME} SHARED ${fastertransformer_ths_files})
   set_target_properties(${LIB_NAME} PROPERTIES
                         CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-  target_link_libraries(${LIB_NAME} "${TORCH_LIBRARIES}" encoder decoder decoding)
+  target_link_libraries(${LIB_NAME} "${TORCH_LIBRARIES}" encoder decoder decoding cuda_kernels topk_v2)
 endif()

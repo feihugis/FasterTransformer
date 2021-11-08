@@ -20,8 +20,14 @@
 #include "fastertransformer/th_op/encoder.h"
 #include "fastertransformer/th_op/decoder.h"
 #include "fastertransformer/th_op/decoding.h"
+#include "fastertransformer/th_op/fused_add_layer_norm.h"
 #include "fastertransformer/th_op/gpt.h"
+#include "fastertransformer/th_op/linear.h"
+#include "fastertransformer/th_op/topk.h"
 #include "fastertransformer/th_op/weight_quantize_op.h"
+
+#include "fastertransformer/cuda/topk_kernels.cuh"
+#include "fastertransformer/cuda/topk_kernels_v2.cuh"
 
 using torch::Tensor;
 
@@ -149,3 +155,10 @@ static auto gather_tree =
 
 static auto weight_quantize =
   torch::RegisterOperators("fastertransformer::weight_quantize", &torch_ext::weight_quantize);
+
+static auto topk =
+  torch::RegisterOperators("fastseq::topk", &torch_ext::topK);
+
+static auto linear = torch::RegisterOperators("fastseq::linear", &torch_ext::linear);
+
+static auto fused_add_layer_norm = torch::RegisterOperators("fastseq::fused_add_layer_norm", &torch_ext::fused_add_layer_norm);

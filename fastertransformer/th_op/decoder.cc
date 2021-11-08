@@ -103,19 +103,21 @@ FasterTransformerDecoder::~FasterTransformerDecoder() {
   delete ftdecoder;
 }
   
-Tensor FasterTransformerDecoder::forward(Tensor input, Tensor memory, Tensor memory_seq_lens, std::vector<Tensor> self_cache, Tensor mem_cache, int64_t step) {
+Tensor FasterTransformerDecoder::forward(Tensor input, Tensor memory, int64_t input_seq_len, int64_t memory_seq_len, std::vector<Tensor> self_cache, Tensor mem_cache, int64_t step) {
   CHECK_INPUT(input, _st);
   CHECK_INPUT(memory, _st);
   CHECK_INPUT(self_cache[0], _st);
   CHECK_INPUT(self_cache[1], _st);
   CHECK_INPUT(mem_cache, _st);
-  CHECK_CUDA(memory_seq_lens); CHECK_CONTIGUOUS(memory_seq_lens); TORCH_CHECK(memory_seq_lens.dtype()==torch::kInt32, "mem_seq_lens dtype should be int32");
+  // CHECK_CUDA(memory_seq_lens); CHECK_CONTIGUOUS(memory_seq_lens); TORCH_CHECK(memory_seq_lens.dtype()==torch::kInt32, "mem_seq_lens dtype should be int32");
   auto mem_size = memory.sizes();
   int batch_size = mem_size[0];
   int seq_len = mem_size[1];
   int mem_hidden_dim = mem_size[2];
   auto output = torch::empty_like(input);
-  ftdecoder->forward(batch_size, seq_len, mem_hidden_dim, step, input, memory, memory_seq_lens, self_cache, mem_cache, output);
+  ftdecoder->forward(
+    batch_size, seq_len, mem_hidden_dim, step, input, memory, input_seq_len,
+    memory_seq_len, self_cache, mem_cache, output);
   return output;
 }
 

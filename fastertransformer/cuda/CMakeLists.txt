@@ -30,6 +30,10 @@ set(topk_kernel_files
   topk_kernels.cu
 )
 
+set(topk_kernel_v2_files
+  topk_kernels_v2.cu
+)
+
 set(decoding_kernel_files
   decoding_kernels.cu
 )
@@ -64,7 +68,7 @@ target_link_libraries(encoder PUBLIC -lcublas -lcublasLt -lcudart -lcurand cuda_
 add_library(decoder STATIC ${decoder_kernel_files})
 set_property(TARGET decoder PROPERTY POSITION_INDEPENDENT_CODE  ON)
 set_property(TARGET decoder PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
-target_link_libraries(decoder PUBLIC -lcublas -lcudart -lcurand cuda_kernels attention_kernels transformer_kernels nccl_utils nvtx_utils)
+target_link_libraries(decoder PUBLIC -lcublas -lcudart -lcurand cuda_kernels attention_kernels transformer_kernels decoder_gemm_func nccl_utils nvtx_utils)
 
 add_library(online_softmax_beamsearch STATIC ${online_softmax_beamsearch_kernel_files})
 set_property(TARGET online_softmax_beamsearch PROPERTY POSITION_INDEPENDENT_CODE  ON)
@@ -75,6 +79,21 @@ add_library(topk STATIC ${topk_kernel_files})
 set_property(TARGET topk PROPERTY POSITION_INDEPENDENT_CODE  ON)
 set_property(TARGET topk PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
 target_link_libraries(topk PUBLIC -lcublas -lcudart -lcurand)
+
+add_library(topk_shared SHARED ${topk_kernel_files})
+set_property(TARGET topk_shared PROPERTY POSITION_INDEPENDENT_CODE  ON)
+set_property(TARGET topk_shared PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+target_link_libraries(topk_shared PUBLIC -lcublas -lcudart -lcurand)
+
+add_library(topk_v2 STATIC ${topk_kernel_v2_files})
+set_property(TARGET topk_v2 PROPERTY POSITION_INDEPENDENT_CODE  ON)
+set_property(TARGET topk_v2 PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+target_link_libraries(topk_v2 PUBLIC -lcublas -lcudart -lcurand)
+
+add_library(topk_shared_v2 SHARED ${topk_kernel_v2_files})
+set_property(TARGET topk_shared_v2 PROPERTY POSITION_INDEPENDENT_CODE  ON)
+set_property(TARGET topk_shared_v2 PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
+target_link_libraries(topk_shared_v2 PUBLIC -lcublas -lcudart -lcurand)
 
 add_library(decoding STATIC ${decoding_kernel_files})
 set_property(TARGET decoding PROPERTY POSITION_INDEPENDENT_CODE  ON)

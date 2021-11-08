@@ -41,6 +41,24 @@ void add_QKV_bias_transpose_kernelLauncher(
   cudaStream_t stream);
 
 template <typename T>
+void add_QKV_bias_transpose_kernelLauncher(
+  T* q_buf,
+  T* k_buf,
+  T* v_buf,
+  T* Q,
+  const T* bias_Q,
+  T* K,
+  const T* bias_K,
+  T* V,
+  const T* bias_V,
+  const int batch_size,
+  const int seq_len_q,
+  const int seq_len_kv,
+  const int head_num,
+  const int size_per_head,
+  cudaStream_t stream);
+
+template <typename T>
 void add_fusedQKV_bias_transpose_kernelLauncher(
   T* q_buf,
   T* k_buf,
@@ -59,6 +77,17 @@ void attn_softmax_kernelLauncher(
   const T* attr_mask,
   const int batch_size,
   const int seq_len,
+  const int head_num,
+  const T scalar,
+  cudaStream_t stream);
+
+template <typename T>
+void attn_softmax_kernelLauncher(
+  T* buffer,
+  const T* attr_mask,
+  const int batch_size,
+  const int seq_len_q,
+  const int seq_len_k,
   const int head_num,
   const T scalar,
   cudaStream_t stream);

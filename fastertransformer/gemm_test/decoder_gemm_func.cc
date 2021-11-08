@@ -1,29 +1,28 @@
-/*
- * Copyright (c) 2020-2021, NVIDIA CORPORATION.  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+#include "decoder_gemm_func.h"
+#include "fastertransformer/utils/common.h"
+#include <vector>
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_fp16.h>
 #include <cuda_profiler_api.h>
 #include <ctime>
 #include <sys/time.h>
-#include "common.h"
 #include <vector>
+
+#include <iostream>
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <cublas_v2.h>
+#include <cublasLt.h>
+#include <cstring>
+#include <sstream>
+#include <algorithm>
+#include "fastertransformer/utils/common.h"
+
 using namespace std;
-using namespace fastertransformer;
+
+
+namespace fastertransformer{
 
 // Utility function to print customMatmulPerf_t structure
 int printPerfStructure(int m, int n, int k, const customMatmulPerf_t &perf, FILE* fout, int is_fp16, int hasPrint) {
@@ -67,7 +66,6 @@ static inline bool
 time_compare(const customMatmulPerf_t &perf_a, const customMatmulPerf_t &perf_b) {
     return ((perf_a.status == CUBLAS_STATUS_SUCCESS) && (perf_a.time < perf_b.time));
 }
-
 
 static cublasStatus_t 
 customMatmulRun(cublasLtHandle_t ltHandle,  // to get the capabilities (required a GPU)
@@ -484,14 +482,11 @@ CLEANUP:
     return status == CUBLAS_STATUS_SUCCESS ? 0 : 1;
 }
 
+template void generate_gemm_config<float>(int batchcount, int m, int n, int k, bool is_append);
+template void generate_gemm_config<half>(int batchcount, int m, int n, int k, bool is_append);
+
 template<typename T>
-void generate_decoding_gemm_config(int batch_size,
-                                  int beam_width,
-                                  int head_number,
-                                  int size_per_head,
-                                  int vocab_size,
-                                  int seq_len,
-                                  int memory_hidden_units)
+void generate_gemm_config(int batchcount, int m, int n, int k, bool is_append)
 {
   FILE* fd = fopen("decoding_gemm_config.in", "a+");
   if(fd == NULL)
@@ -499,51 +494,6 @@ void generate_decoding_gemm_config(int batch_size,
     printf("[ERROR] Cannot write to file decoding_gemm_config.in\n");
     return;
   }
-
-  const int hidden_units = head_number * size_per_head;
-  const int gemm_num = 7;
-  int M[gemm_num];
-  int N[gemm_num];
-  int K[gemm_num];
-  char mess[gemm_num][256];
-  
-  //gemm1 
-  M[0] = batch_size * beam_width;
-  K[0] = hidden_units;
-  N[0] = std::is_same<T, float>::value ? vocab_size : (int)(ceil(vocab_size / 8.) * 8);
-  strcpy(mess[0], "decoder_output * embedding_kernel -> embedding_output");
-
-  //gemm2
-  M[1] = batch_size * beam_width;
-  K[1] = hidden_units;
-  N[1] = hidden_units;
-  strcpy(mess[1], "from_tensor * weightQ/K/V in masked attention");
-
-  //gemm3
-  M[2] = M[0] * seq_len;
-  K[2] = memory_hidden_units;
-  N[2] = hidden_units;
-  strcpy(mess[2], "from_tensor * weightK/V in cross attention");
-
-  M[3] = batch_size * beam_width;
-  K[3] = hidden_units;
-  N[3] = hidden_units * 4;
-  strcpy(mess[3], "ffn gemm1 ");
-
-  M[4] = batch_size * beam_width;
-  K[4] = hidden_units * 4;
-  N[4] = hidden_units; 
-  strcpy(mess[4], "ffn gemm2");
-
-  M[5] = batch_size * beam_width;
-  K[5] = hidden_units;
-  N[5] = hidden_units;
-  strcpy(mess[5], "from_tensor * QKV (batchstridedgemm) in masked attention");
-
-  M[6] = batch_size * beam_width;
-  K[6] = hidden_units;
-  N[6] = hidden_units * 3;
-  strcpy(mess[6], "from_tensor * weight_QKV in one normal gemm");
 
   cublasHandle_t cublas_handle;
   check_cuda_error(cublasCreate(&cublas_handle));
@@ -555,7 +505,7 @@ void generate_decoding_gemm_config(int batch_size,
   cudaDataType_t CType;
   cudaDataType_t computeType;
   int startAlgo, endAlgo;
-  const int ites = 100;
+  const int ites = 500;
   struct timeval start, end;
   
   if(sizeof(T) == sizeof(float)){
@@ -576,56 +526,80 @@ void generate_decoding_gemm_config(int batch_size,
   }
   T alpha = (T)1.0f;
   T beta = (T)0.0f;
-  fprintf(fd, "dataType, batchCount, n, m, k, algoId, customOption, tile, numSplitsK, swizzle, reductionScheme, workspaceSize, stages, exec_time\n");
+
+  if (is_append == false) {
+      fprintf(fd, "dataType, batchCount, n, m, k, algoId, customOption, tile, numSplitsK, swizzle, reductionScheme, workspaceSize, stages, exec_time\n");
+  }
+  
 
   printf("***Decoding Gemm Testing***\n");
-  for(int i = 0; i < gemm_num; ++i)
-  {
-    int m = M[i], n = N[i], k = K[i];
+  
     printf("\n-----------------------------\n");
-    printf("GEMM test %d: [M: %d, K: %d, N: %d] %s\n", i, m, k, n, mess[i]);
+    printf("GEMM test: [M: %d, K: %d, N: %d] \n", m, k, n);
     T* d_A;
     T* d_B;
     T* d_C;
 
-    if(i == 5)
-    {
-      check_cuda_error(cudaMalloc((void**)&d_A, sizeof(T) * m * k));
-      check_cuda_error(cudaMalloc((void**)&d_B, sizeof(T) * k * n * 3));
-      check_cuda_error(cudaMalloc((void**)&d_C, sizeof(T) * m * n * 3));
-    }
-    else
-    {
-      check_cuda_error(cudaMalloc((void**)&d_A, sizeof(T) * m * k));
-      check_cuda_error(cudaMalloc((void**)&d_B, sizeof(T) * k * n));
-      check_cuda_error(cudaMalloc((void**)&d_C, sizeof(T) * m * n));
-    }
-
+    check_cuda_error(cudaMalloc((void**)&d_A, sizeof(T) * m * k));
+    check_cuda_error(cudaMalloc((void**)&d_B, sizeof(T) * k * n));
+    check_cuda_error(cudaMalloc((void**)&d_C, sizeof(T) * m * n));
+    
     float exec_time = 99999.0f;
     int fast_algo = 0;
-    for(int algo = startAlgo; algo <= endAlgo; algo++)
+    static const cublasGemmAlgo_t algos[] = {
+        CUBLAS_GEMM_DFALT,
+        CUBLAS_GEMM_DEFAULT,
+        CUBLAS_GEMM_ALGO0,
+        CUBLAS_GEMM_ALGO1,
+        CUBLAS_GEMM_ALGO2,
+        CUBLAS_GEMM_ALGO3,
+        CUBLAS_GEMM_ALGO4,
+        CUBLAS_GEMM_ALGO5,
+        CUBLAS_GEMM_ALGO6,
+        CUBLAS_GEMM_ALGO7,
+        CUBLAS_GEMM_ALGO8,
+        CUBLAS_GEMM_ALGO9,
+        CUBLAS_GEMM_ALGO10,   
+        CUBLAS_GEMM_ALGO11,
+        CUBLAS_GEMM_ALGO12,        
+        CUBLAS_GEMM_ALGO13,        
+        CUBLAS_GEMM_ALGO14,        
+        CUBLAS_GEMM_ALGO15,        
+        CUBLAS_GEMM_ALGO16,        
+        CUBLAS_GEMM_ALGO17,       
+        CUBLAS_GEMM_ALGO18, //sliced 32x32    
+        CUBLAS_GEMM_ALGO19, //sliced 64x32     
+        CUBLAS_GEMM_ALGO20, //sliced 128x32     
+        CUBLAS_GEMM_ALGO21, //sliced 32x32  -splitK      
+        CUBLAS_GEMM_ALGO22, //sliced 64x32  -splitK      
+        CUBLAS_GEMM_ALGO23, //sliced 128x32 -splitK      
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP,        
+        CUBLAS_GEMM_DFALT_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO0_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO1_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO2_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO3_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO4_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO5_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO6_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO7_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO8_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO9_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO10_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO11_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO12_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO13_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO14_TENSOR_OP,        
+        CUBLAS_GEMM_ALGO15_TENSOR_OP        
+    };
+
+    for(const auto algo : algos)
     {
       cublasStatus_t status;
       cudaDeviceSynchronize();
       gettimeofday(&start, NULL);
       for(int ite = 0; ite < ites; ++ite)
       {
-        if(i == 5)
-        {
-          status = cublasGemmStridedBatchedEx(cublas_handle,
-                CUBLAS_OP_N, CUBLAS_OP_N,
-                n, m, k,
-                &alpha,
-                d_B, BType, n, k*n,
-                d_A, AType, k, 0,
-                &beta,
-                d_C, CType, n, m*n,
-                3,
-                computeType,
-                static_cast<cublasGemmAlgo_t>(algo));
-        }
-        else
-        {
           status = cublasGemmEx(cublas_handle, 
                                 CUBLAS_OP_N, CUBLAS_OP_N,
                                 n, m, k, 
@@ -635,8 +609,7 @@ void generate_decoding_gemm_config(int batch_size,
                                 &beta, 
                                 d_C, CType, n, 
                                 computeType, 
-                                static_cast<cublasGemmAlgo_t>(algo));
-        }
+                                algo);
       }
       cudaDeviceSynchronize();
       gettimeofday(&end, NULL);
@@ -656,7 +629,7 @@ void generate_decoding_gemm_config(int batch_size,
         is_fp16 = 1;
 
     //we compare cublasLt for fp16
-    if(i != 5 && is_fp16 == 1){
+    if(is_fp16 == 1){
       void *workSpace = NULL;
       int workSpaceSize = CUBLAS_WORKSPACE_SIZE;
       cudaMalloc((void **)&workSpace, workSpaceSize);
@@ -670,333 +643,19 @@ void generate_decoding_gemm_config(int batch_size,
       if(perfResults[0].time < exec_time){
         printPerfStructure(n, m, k, perfResults[0], fd, is_fp16, 0);
       }else{
-        fprintf(fd, "%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n",  is_fp16 ? HALF_DATATYPE:FLOAT_DATATYPE, i == 5 ? 3:1, 
+        fprintf(fd, "%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n",  is_fp16 ? HALF_DATATYPE:FLOAT_DATATYPE, 1, 
                           n, m, k, fast_algo, -1, -1, -1, -1, -1, -1, -1, exec_time);
       }
       printf("***cublasLt Gemm Testing End***\n");
       cudaFree(workSpace);
     }else{
-      fprintf(fd, "%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n",  is_fp16 ? HALF_DATATYPE:FLOAT_DATATYPE, i == 5 ? 3:1,
+      fprintf(fd, "%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n",  is_fp16 ? HALF_DATATYPE:FLOAT_DATATYPE, 1,
                            n, m, k, fast_algo, -1, -1, -1, -1, -1, -1, -1, exec_time);
     }
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
-  }
+  // }
 }
 
-template<typename T>
-void generate_gpt_gemm_config(int local_batch_size,
-                              int context_local_batch_size,
-                              int head_number,
-                              int size_per_head,
-                              int vocab_size,
-                              int start_len,
-                              int tensor_para_size)
-{
-  FILE* fd = fopen("decoding_gemm_config.in", "w");
-  if(fd == NULL)
-  {
-    printf("[ERROR] Cannot write to file decoding_gemm_config.in\n");
-    return;
-  }
-
-  if(head_number % tensor_para_size != 0)
-  {
-    printf("[ERROR] head_num mod tensor_para_size should be 0. Here, head_number is %d, and tensor_para_size is %d. \n", head_number, tensor_para_size);
-    exit(-1);
-  }
-
-  const int hidden_units = head_number * size_per_head;
-  const int local_hidden_units = hidden_units / tensor_para_size;
-  const int local_head_number = head_number / tensor_para_size;
-  const int gemm_num = 14;
-  int M[gemm_num];
-  int N[gemm_num];
-  int K[gemm_num];
-  char mess[gemm_num][256];
-  int batch_count[gemm_num];
-
-  //gemm1
-  M[0] = local_batch_size;
-  K[0] = hidden_units;
-  N[0] = std::is_same<T, float>::value ? vocab_size : (int)(ceil(vocab_size / (8. * tensor_para_size))) * 8;
-  batch_count[0] = 1;
-  strcpy(mess[0], "decoder_output * embedding_kernel -> embedding_output");
-
-  //gemm2
-  M[1] = local_batch_size;
-  K[1] = hidden_units;
-  N[1] = 3 * local_hidden_units;
-  batch_count[1] = 1;
-  strcpy(mess[1], "from_tensor * weightQKV in masked attention (fused QKV weights)");
-
-  //gemm3
-  M[2] = local_batch_size;
-  K[2] = hidden_units;
-  N[2] = local_hidden_units;
-  batch_count[2] = 3;
-  strcpy(mess[2], "from_tensor * weightK/V in masked attention (GemmBatched)");
-
-  //gemm4
-  M[3] = local_batch_size;
-  K[3] = hidden_units;
-  N[3] = local_hidden_units;
-  batch_count[3] = 1;
-  strcpy(mess[3], "from_tensor * weightK/V in masked attention (unfused)");
-
-  //gemm5
-  M[4] = local_batch_size;
-  K[4] = local_hidden_units;
-  N[4] = hidden_units;
-  batch_count[4] = 1;
-  strcpy(mess[4], "masked_attention_output * output_gemm (unfused)");
-
-  //gemm6
-  M[5] = local_batch_size;
-  K[5] = hidden_units;
-  N[5] = 4 * local_hidden_units;
-  batch_count[5] = 1;
-  strcpy(mess[5], "ffn gemm1");
-
-  //gemm7
-  M[6] = local_batch_size;
-  K[6] = 4 * local_hidden_units;
-  N[6] = hidden_units;
-  batch_count[6] = 1;
-  strcpy(mess[6], "ffn gemm2");
-
-  //gemm8
-  M[7] = context_local_batch_size * start_len;
-  K[7] = hidden_units;
-  N[7] = 3 * local_hidden_units;
-  batch_count[7] = 1;
-  strcpy(mess[7], "from_tensor * weightQKV in masked attention (fused QKV weights in forward_context)");
-
-  //gemm9
-  M[8] = context_local_batch_size * start_len;
-  K[8] = hidden_units;
-  N[8] = local_hidden_units;
-  batch_count[8] = 1;
-  strcpy(mess[8], "from_tensor * weight_Q/K/V in masked attention (unfused QKV weights in forward_context)");
-
-  //gemm10
-  M[9] = start_len;
-  K[9] = size_per_head;
-  N[9] = start_len;
-  batch_count[9] = context_local_batch_size * local_head_number;
-  strcpy(mess[9], "Q * K in masked attention (GemmStridedBatchedEx TN forward_context)");
-
-  //gemm11
-  M[10] = start_len;
-  K[10] = start_len;
-  N[10] = size_per_head;
-  batch_count[10] = context_local_batch_size * local_head_number;
-  strcpy(mess[10], "QK * V in masked attention (GemmStridedBatchedEx NN forward_context)");
-
-  //gemm12
-  M[11] = local_batch_size * start_len;
-  K[11] = local_hidden_units;
-  N[11] = hidden_units;
-  batch_count[11] = 1;
-  strcpy(mess[11], "masked_attention_output * output_gemm (in forward_context)");
-
-  //gemm13
-  M[12] = context_local_batch_size * start_len;
-  K[12] = hidden_units;
-  N[12] = 4 * local_hidden_units;
-  batch_count[12] = 1;
-  strcpy(mess[12], "ffn1 (in forward_context)");
-
-  //gemm14
-  M[13] = context_local_batch_size * start_len;
-  K[13] = 4 * local_hidden_units;
-  N[13] = hidden_units;
-  batch_count[13] = 1;
-  strcpy(mess[13], "ffn2 (in forward_context)");
-
-  cublasHandle_t cublas_handle;
-  check_cuda_error(cublasCreate(&cublas_handle));
-  cublasLtHandle_t ltHandle;
-  check_cuda_error(cublasLtCreate(&ltHandle));
-
-  cudaDataType_t AType;
-  cudaDataType_t BType;
-  cudaDataType_t CType;
-  cudaDataType_t computeType;
-  int startAlgo, endAlgo;
-  const int ites = 100;
-  struct timeval start, end;
-
-  if(sizeof(T) == sizeof(float)){
-    AType = CUDA_R_32F;
-    BType = CUDA_R_32F;
-    CType = CUDA_R_32F;
-    computeType = CUDA_R_32F;
-    startAlgo = (int)CUBLAS_GEMM_DEFAULT;
-    endAlgo = (int)CUBLAS_GEMM_ALGO23;
-  }
-  else{
-    AType = CUDA_R_16F;
-    BType = CUDA_R_16F;
-    CType = CUDA_R_16F;
-    computeType = CUDA_R_16F;
-    startAlgo = (int)CUBLAS_GEMM_DEFAULT_TENSOR_OP;
-    endAlgo = (int)CUBLAS_GEMM_ALGO15_TENSOR_OP;
-  }
-  T alpha = (T)1.0f;
-  T beta = (T)0.0f;
-  fprintf(fd, "dataType, batchCount, n, m, k, algoId, customOption, tile, numSplitsK, swizzle, reductionScheme, workspaceSize, stages, exec_time\n");
-
-  printf("***Decoding Gemm Testing***\n");
-  for(int i = 0; i < gemm_num; ++i)
-  {
-    int m = M[i], n = N[i], k = K[i];
-    const int b = batch_count[i];
-    printf("\n-----------------------------\n");
-    printf("GEMM test %d: [B: %d, M: %d, K: %d, N: %d] %s\n", i, b, m, k, n, mess[i]);
-    T* d_A;
-    T* d_B;
-    T* d_C;
-
-    check_cuda_error(cudaMalloc((void**)&d_A, sizeof(T) * m * k * b));
-    check_cuda_error(cudaMalloc((void**)&d_B, sizeof(T) * k * n * b));
-    check_cuda_error(cudaMalloc((void**)&d_C, sizeof(T) * m * n * b));
-
-    T* harray[9];
-    T** darray = 0;
-    check_cuda_error(cudaMalloc((void**)&darray, sizeof(T*) * 9));
-
-    if(i == 2)
-    {
-      harray[0] = (T*)d_A;
-      harray[1] = (T*)(d_A + m * k);
-      harray[2] = (T*)(d_A + 2 * m * k);
-      harray[3] = (T*)d_B;
-      harray[4] = (T*)d_B + k * n;
-      harray[5] = (T*)d_B + 2 * k * n;
-      harray[6] = (T*)d_C;
-      harray[7] = (T*)d_C + m * n;
-      harray[8] = (T*)d_C + 2 * m * n;
-      cudaMemcpy((void*)darray, (void*)harray, sizeof(T*) * 9, cudaMemcpyHostToDevice);
-    }
-
-    T** dAarray = darray;
-    T** dBarray = darray + 3;
-    T** dCarray = darray + 6;
-
-    float exec_time = 99999.0f;
-    int fast_algo = 0;
-    for(int algo = startAlgo; algo <= endAlgo; algo++)
-    {
-      cublasStatus_t status;
-      cudaDeviceSynchronize();
-      gettimeofday(&start, NULL);
-      for(int ite = 0; ite < ites; ++ite)
-      {
-        if(i == 2)
-        {
-          status = cublasGemmBatchedEx(cublas_handle,
-                                       CUBLAS_OP_N, CUBLAS_OP_N,
-                                       n, m, k,
-                                       &alpha,
-                                       (const void* const*) dBarray, BType, n,
-                                       (const void* const*) dAarray, AType, k,
-                                       &beta,
-                                       (void* const*)dCarray, CType, n,
-                                       b,
-                                       computeType,
-                                       static_cast<cublasGemmAlgo_t>(algo));
-        }
-        else if(i == 9)
-        {
-          status = cublasGemmStridedBatchedEx(cublas_handle,
-                                              CUBLAS_OP_T, CUBLAS_OP_N,
-                                              n, m, k,
-                                              &alpha,
-                                              d_B, BType, k, k * n,
-                                              d_A, AType, k, m * k,
-                                              &beta,
-                                              d_C, CType, n, m * n,
-                                              b,
-                                              computeType,
-                                              static_cast<cublasGemmAlgo_t>(algo));
-        }
-        else if(i == 10)
-        {
-          status = cublasGemmStridedBatchedEx(cublas_handle,
-                                              CUBLAS_OP_N, CUBLAS_OP_N,
-                                              n, m, k,
-                                              &alpha,
-                                              d_B, BType, n, k * n,
-                                              d_A, AType, k, m * k,
-                                              &beta,
-                                              d_C, CType, n, m * n,
-                                              b,
-                                              computeType,
-                                              static_cast<cublasGemmAlgo_t>(algo));
-        }
-        else
-        {
-          status = cublasGemmEx(cublas_handle,
-                                CUBLAS_OP_N, CUBLAS_OP_N,
-                                n, m, k,
-                                &alpha,
-                                d_B, BType, n,
-                                d_A, AType, k,
-                                &beta,
-                                d_C, CType, n,
-                                computeType,
-                                static_cast<cublasGemmAlgo_t>(algo));
-        }
-      }
-      cudaDeviceSynchronize();
-      gettimeofday(&end, NULL);
-      if(status == CUBLAS_STATUS_SUCCESS)
-      {
-        printf("algo_%d costs %.3fms \n", algo, diffTime(start, end) / ites);
-        if(diffTime(start, end) / ites < exec_time)
-        {
-          exec_time = diffTime(start, end) / ites;
-          fast_algo = algo;
-        }
-      }
-    }
-
-    printf("fast_algo %d costs %.3f ms\n", fast_algo, exec_time);
-    int is_fp16 = 0;
-    if (sizeof(T) == sizeof(half))
-        is_fp16 = 1;
-
-    //we compare cublasLt for fp16
-    if((i != 2 && i != 9 && i != 10) && is_fp16 == 1){
-      void *workSpace = NULL;
-      int workSpaceSize = CUBLAS_WORKSPACE_SIZE;
-      cudaMalloc((void **)&workSpace, workSpaceSize);
-      printf("***cublasLt Gemm Testing Beign***\n");
-       // Let try a fixed number of combinations
-      int ALGO_COMBINATIONS = 5000;
-      customMatmulPerf_t perfResults[ALGO_COMBINATIONS];
-
-      LtgemmCustomFind<T>(ltHandle, n, m, k, &alpha, d_B, d_A,
-                      &beta, d_C, workSpace, workSpaceSize, fd, perfResults, ALGO_COMBINATIONS);
-      if(perfResults[0].time < exec_time){
-        printPerfStructure(n, m, k, perfResults[0], fd, is_fp16, 0);
-      }else{
-        fprintf(fd, "%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n",  is_fp16 ? HALF_DATATYPE:FLOAT_DATATYPE, b,
-                          n, m, k, fast_algo, -1, -1, -1, -1, -1, -1, -1, exec_time);
-      }
-      printf("***cublasLt Gemm Testing End***\n");
-      cudaFree(workSpace);
-    }else{
-      fprintf(fd, "%d %d %d %d %d %d %d %d %d %d %d %d %d %f\n",  is_fp16 ? HALF_DATATYPE:FLOAT_DATATYPE, b,
-                           n, m, k, fast_algo, -1, -1, -1, -1, -1, -1, -1, exec_time);
-    }
-
-    check_cuda_error(cudaFree(darray));
-    check_cuda_error(cudaFree(d_A));
-    check_cuda_error(cudaFree(d_B));
-    check_cuda_error(cudaFree(d_C));
-  }
 }
-

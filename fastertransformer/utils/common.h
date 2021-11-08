@@ -39,6 +39,7 @@
 
 #include "fastertransformer/gemm_test/encoder_gemm_func.h"
 #include "fastertransformer/gemm_test/encoder_igemm_func.h"
+#include "fastertransformer/gemm_test/decoder_gemm_func.h"
 
 struct AbstractParam
 {
@@ -195,12 +196,64 @@ void print_to_file(const T *result, const int size, const char *file, cudaStream
 }
 
 template <typename T>
-void print_to_screen(T *result, const int size)
+void print_to_screen(const T *result, const int size)
 {
   T *tmp = (T *)malloc(sizeof(T) * size);
   check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * size, cudaMemcpyDeviceToHost));
   for (int i = 0; i < size; ++i)
-    printf("%d, %f\n", i, (float)tmp[i]);
+    // printf("%d, %f\n", i, (float)tmp[i]);
+    printf("%f, ", (float)tmp[i]);
+  free(tmp);
+  printf(" ...... \n");
+}
+
+template <typename T>
+void print_to_screen(const T *result, const int size, const char* comment)
+{
+  printf("============%s\n", comment);
+  T *tmp = (T *)malloc(sizeof(T) * 1 * 3 * 8 * 64);
+  check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * 1 * 3 * 8 * 64, cudaMemcpyDeviceToHost));
+  for (int row = 0; row < 3; ++row) {
+    for (int i = 0 + 512 * row; i < 512 * row + size; ++i)
+      // printf("%d, %f\n", i, (float)tmp[i]);
+      printf("%f(%d), ", (float)tmp[i], i - 512 * row);
+    printf(" ...... \n\n");
+  }
+  free(tmp);
+}
+
+template <typename T>
+void print_to_screen(const T *result, const int size, const char* comment, int COL)
+{
+  printf("============%s\n", comment);
+  T *tmp = (T *)malloc(sizeof(T) * 1 * 3 * 8 * 64);
+  check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * 1 * 3 * 8 * 64, cudaMemcpyDeviceToHost));
+  for (int row = 0; row < 3; ++row) {
+    for (int i = 0 + COL * row; i < COL * row + size; ++i)
+      // printf("%d, %f\n", i, (float)tmp[i]);
+      printf("%f(%d), ", (float)tmp[i], i - COL * row);
+    printf(" ...... \n\n");
+  }
+  free(tmp);
+}
+
+template <typename T>
+void print_to_screen(const T *result, const int left_ele_num, const char* comment, int COL, int ROW)
+{
+  printf("============%s\n", comment);
+  T *tmp = (T *)malloc(sizeof(T) * COL * ROW);
+  check_cuda_error(cudaMemcpy(tmp, result, sizeof(T) * COL * ROW, cudaMemcpyDeviceToHost));
+  for (int row = 0; row < ROW; ++row) {
+    printf("[%d]", row);
+    for (int i = 0 + COL * row; i < COL * row + left_ele_num; ++i)
+      // printf("%d, %f\n", i, (float)tmp[i]);
+      printf("%f(%d), ", (float)tmp[i], i - COL * row);
+    printf(" ...... ");
+    for (int i = left_ele_num; i > 0; --i) {
+      printf("%f(%d), ", (float)tmp[COL*(row + 1)-i], COL - i);
+    }
+    printf("\n\n");
+  }
   free(tmp);
 }
 
