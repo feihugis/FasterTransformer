@@ -46,6 +46,7 @@ if(BUILD_MULTI_GPU)
 endif()
 
 if(BUILD_PYT)
+  add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
   if(DEFINED ENV{NVIDIA_PYTORCH_VERSION})
     if($ENV{NVIDIA_PYTORCH_VERSION} VERSION_LESS "20.03")
       message(FATAL_ERROR "NVIDIA PyTorch image is too old for TorchScript mode.")
