@@ -83,7 +83,7 @@ void cublasAlgoMap::loadGemmConfig()
             continue;
         }
         char mark[256];
-        sprintf(mark, "%d_%d_%d_%d_%d", batchCount2, m2, n2, k2, dataType);
+        sprintf(mark, "%d_%d_%d_%d_%d", batchCount2, n2, m2, k2, dataType);
         std::string markStr(mark);
         // workspaceSize should be zero
         if (algo_map_.find(markStr) == algo_map_.end()) {
@@ -106,6 +106,7 @@ bool cublasAlgoMap::isExist(
 {
     char mark[256];
     sprintf(mark, "%d_%d_%d_%d_%d", batch_count, n, m, k, data_type);
+    auto find = algo_map_.find(mark) != algo_map_.end();
     return algo_map_.find(mark) != algo_map_.end();
 }
 
