@@ -198,7 +198,7 @@ public:
                      const int ldc,
                      const int batch_count);
 
-    bool isFuseBatchGemm(const int batch_count, const int m, const int k, const int n);
+    bool isFuseBatchGemm(const int batch_count, const int m, const int n, const int k);
 
 #ifdef SPARSITY_ENABLED
     void SpGemm(cublasOperation_t transa,

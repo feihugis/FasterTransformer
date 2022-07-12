@@ -109,7 +109,7 @@ void FusedAttentionLayer<T>::forward(std::vector<fastertransformer::Tensor>* out
     }
     else {
 #endif
-        const bool is_batched_QKV_ = cublas_wrapper_->isFuseBatchGemm(3, n, m, k);
+        const bool is_batched_QKV_ = cublas_wrapper_->isFuseBatchGemm(3, m, n, k);
         if (is_batched_QKV_) {
             const T* hA[]{attention_weights->query_weight.kernel,
                           attention_weights->key_weight.kernel,

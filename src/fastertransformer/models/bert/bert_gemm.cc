@@ -14,11 +14,18 @@
  * limitations under the License.
  */
 
+#include <sys/stat.h>
+
 #include "src/fastertransformer/utils/gemm_test/encoder_gemm_func.h"
 #include "src/fastertransformer/utils/gemm_test/encoder_igemm_func.h"
 #include "src/fastertransformer/utils/memory_utils.h"
 
 namespace ft = fastertransformer;
+
+inline bool is_file_exists(const std::string& name) {
+  struct stat buffer;
+  return (stat(name.c_str(), &buffer) == 0);
+}
 
 int main(int argc, char* argv[])
 {
@@ -45,6 +52,10 @@ int main(int argc, char* argv[])
     printf("  int8_mode: %d \n", int8_mode);
     std::cout << std::endl;
 
+    bool is_append = is_file_exists("gemm_config.in");
+    if (int8_mode != 0) {
+      is_append = is_file_exists("igemm_config.in");
+    }
     void* gemm_test_buf;
     size_t buf_size_in_byte =
         ft::calGemmTestBufSizeInByte(batch_size, seq_len, head_num, size_per_head, inter_size, 0, int8_mode, data_type);
@@ -63,13 +74,14 @@ int main(int argc, char* argv[])
     }
 
     if (int8_mode != 0) {
-        ft::generate_encoder_igemm_config(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, false);
+        ft::generate_encoder_igemm_config(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, is_append);
     }
     else if (data_type == ft::FLOAT_DATATYPE) {
-        ft::generate_encoder_gemm_config<float>(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, false);
+        ft::generate_encoder_gemm_config<float>(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, is_append);
     }
     else if (data_type == ft::HALF_DATATYPE) {
-        ft::generate_encoder_gemm_config<half>(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, false);
+        ft::generate_encoder_gemm_config<half>(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, is_append);
+        ft::generate_effective_encoder_gemm_config<half>(batch_size, seq_len, head_num, size_per_head, gemm_test_buf, is_append);
     }
 #ifdef ENABLE_BF16
     else if (data_type == ft::BFLOAT16_DATATYPE) {

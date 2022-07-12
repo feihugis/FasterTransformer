@@ -591,12 +591,13 @@ void cublasMMWrapper::batchedGemm(cublasOperation_t transa,
     mu_->unlock();
 }
 
-bool cublasMMWrapper::isFuseBatchGemm(const int batch_count, const int m, const int k, const int n)
+bool cublasMMWrapper::isFuseBatchGemm(const int batch_count, const int m, const int n, const int k)
 {
     CublasDataType data_type = getCublasDataType(Atype_);
 
-    if (cublas_algo_map_->isExist(batch_count, m, k, n, data_type) == false
-        || cublas_algo_map_->isExist(1, m, k, n, data_type) == false) {
+    if (cublas_algo_map_->isExist(batch_count, m, n, k, data_type) == false
+        || cublas_algo_map_->isExist(1, m, n, k, data_type) == false) {
+        // printf("++++++ Not found algo for batch_count: %d, n: %d, m: %d, k: %d\n", batch_count, n, m, k);
         return false;
     }
     else {
