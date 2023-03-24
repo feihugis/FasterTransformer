@@ -230,8 +230,9 @@ def main():
         start_ids = [torch.tensor(enc.encode(c), dtype=torch.int32, device=device) for c in contexts]
     else:  # unconditional case
         batch_size = max_batch_size
-        contexts = ['<|endoftext|>'] * batch_size
-        start_ids = [torch.IntTensor([end_id for _ in range(args.input_len)])] * batch_size
+        contexts = ['Apple Iphone which on is best Apple Iphone which on is best which brand'] * batch_size
+        start_ids = [torch.tensor(enc.encode(c), dtype=torch.int32, device=device) for c in contexts]
+        # start_ids = [torch.IntTensor([end_id for _ in range(args.input_len)])] * batch_size
 
     start_lengths = [len(ids) for ids in start_ids]
 
@@ -318,6 +319,7 @@ def main():
             return output_dict
 
     # Generate tokens.
+    print(start_ids)
     gen_outputs = gpt_generate_fn()
 
     if rank == 0:
@@ -355,9 +357,22 @@ def main():
             gpt_generate_fn()
         time = timeit.default_timer()
         for _ in range(iterations):
+            torch.cuda.nvtx.range_push("gpt_generate")
             gpt_generate_fn()
+            torch.cuda.nvtx.range_pop()
         time_elapsed = timeit.default_timer() - time
         print(f'[INFO] GPT time costs: {time_elapsed * 1000 / iterations:.2f} ms')
+
+        # g = torch.cuda.CUDAGraph()
+
+        # with torch.cuda.graph(g):
+        #     gpt_generate_fn()
+
+        # start = timeit.default_timer()
+        # for _ in range(iterations):
+        #     g.replay()
+        # end = timeit.default_timer()
+        # print(f"[INFO] GPT time costs: {(end - start) * 1000 / iterations:.2f} s")
 
 
 if __name__ == '__main__':
