@@ -19,6 +19,7 @@ import os
 
 import numpy as np
 import sys
+import time
 import torch
 from datasets import load_dataset, load_metric
 from tqdm import tqdm
@@ -117,7 +118,7 @@ def main():
     random_seed = 5
     temperature = 1
     max_seq_len = hf_config['n_ctx'] if args.ft_use_hf_config else ft_config.getint('gpt', 'max_pos_seq_len')
-    max_batch_size = 1
+    max_batch_size = 512
     repetition_penalty = 1
     vocab_size = 50257
     if not args.ft_use_hf_config and ft_config.has_option('gpt', 'vocab_size'):
@@ -205,13 +206,18 @@ def main():
         else:
             line_encoded = line_encoded[:, -768:]
         line_encoded = line_encoded.type(torch.int32)
-
+ 
+        line_encoded = line_encoded.repeat(max_batch_size, 1)
+        print(f"++++++ line_encoded.shape: {line_encoded.shape}")
+        
+        start = time.time()
         with torch.no_grad():
-            output, ft_output_len = gpt(line_encoded, torch.IntTensor([len(line_encoded[0])]),
+            output, ft_output_len = gpt(line_encoded, torch.IntTensor([len(line_encoded[0])] * max_batch_size),
                                                   output_len,
                                                   return_output_length=True,
                                                   **infer_decode_args)
-
+        end = time.time()
+        print(f"++++++ gpt time: {end - start}")
         tokens = output[0][0][len(line_encoded[0]):ft_output_len[0]].cpu().numpy()
 
         output_lines = tokenizer.decode(output[0][0][len(line_encoded[0]):ft_output_len[0]])
@@ -233,6 +239,7 @@ def main():
             line_encoded = line_encoded[:, -768:]
         line_encoded = line_encoded.type(torch.int32).to(gpt.device)
         input_lengths = torch.tensor([len(line_encoded[0])], dtype=torch.int32, device=gpt.device)
+
 
         with torch.no_grad():
             output_dict = gpt.generate(input_token_ids=line_encoded,
