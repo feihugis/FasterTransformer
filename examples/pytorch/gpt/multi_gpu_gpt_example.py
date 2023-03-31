@@ -17,6 +17,7 @@ import argparse
 import configparser
 import os
 import sys
+import time
 import timeit
 
 import torch
@@ -321,7 +322,6 @@ def main():
     # Generate tokens.
     print(start_ids)
     gen_outputs = gpt_generate_fn()
-
     if rank == 0:
         if not args.use_gpt_decoder_ops:
             if return_cum_log_probs > 0:
@@ -355,13 +355,14 @@ def main():
         iterations = 10
         for _ in range(iterations):
             gpt_generate_fn()
-        time = timeit.default_timer()
+        start = timeit.default_timer()
         for _ in range(iterations):
             torch.cuda.nvtx.range_push("gpt_generate")
+            print(start_ids)
             gpt_generate_fn()
             torch.cuda.nvtx.range_pop()
-        time_elapsed = timeit.default_timer() - time
-        print(f'[INFO] GPT time costs: {time_elapsed * 1000 / iterations:.2f} ms')
+        time_elapsed = timeit.default_timer() - start
+        print(f'[INFO] GPT time costs: {time_elapsed * 1000 / iterations:.3f} ms')
 
         # g = torch.cuda.CUDAGraph()
 
