@@ -583,7 +583,9 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
     int voc_parts = 4;
     if (batch_size * beam_width < 256) {
         // Volta has 80 SMs, so we aim for three waves
-        voc_parts = (240 + batch_size * beam_width - 1) / (batch_size * beam_width);
+        // A100-MIG7 have 45 SMs
+        // TODO: make it more flexible
+        voc_parts = (105/7*2 + batch_size * beam_width - 1) / (batch_size * beam_width);
         voc_parts = std::min(128, voc_parts);  // we implement up to 128
     }
     dim3 grid(batch_size * beam_width, voc_parts);
