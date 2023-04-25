@@ -204,11 +204,37 @@ std::string Tensor::toString() const
         {TYPE_FP8_E4M3, "E4M3"},
         {TYPE_VOID, "VOID"},
     };
-    return fmtstr("Tensor[where=%s, type=%s, shape=%s, data=%p]",
+
+    std::string data_str = "[ \n";
+    size_t max_print_col = 16;
+    size_t max_print_row = 16;
+    size_t row = shape[0];
+    size_t col = size() / shape[0];
+    for (int r = 0; r < max_print_row; ++r) {
+      switch (type)
+      {
+      case TYPE_FP32:
+        data_str = data_str + arr2str<float>((float*)data + r*col, std::min(col, max_print_col)) + " ... \n";
+        break;
+      case TYPE_FP16:
+        data_str = data_str + arr2str<half>((half*)data + r*col, std::min(col, max_print_col)) + " ... \n";
+        break;
+      case TYPE_INT32:
+        data_str = data_str + arr2str<int>((int*)data + r*col, std::min(col, max_print_col)) + " ... \n";
+        break;
+      case TYPE_INT64:
+        data_str = data_str + arr2str<long>((long*)data + r*col, std::min(col, max_print_col)) + " ... \n";
+        break;
+      default:
+        throw std::runtime_error("Unsupported data type");
+      }
+    }
+    data_str = data_str + "...\n]\n";
+    return fmtstr("Tensor{where=%s, type=%s, shape=%s, data=%s}\n",
                   memtype_str.c_str(),
                   type_to_string.at(type).c_str(),
                   vec2str(shape).c_str(),
-                  data);
+                  data_str.c_str());
 }
 
 DataType Tensor::typeFromNumpyDesc(std::string type)
@@ -221,7 +247,7 @@ DataType Tensor::typeFromNumpyDesc(std::string type)
                                                                     {"u8", TYPE_UINT64},
                                                                     {"i1", TYPE_INT8},
                                                                     {"i2", TYPE_INT16},
-                                                                    {"i4", TYPE_INT32},
+                                                                    {"<i4", TYPE_INT32},
                                                                     {"i8", TYPE_INT64},
                                                                     {"f2", TYPE_FP16},
                                                                     {"f4", TYPE_FP32},

@@ -21,6 +21,8 @@
 #include <vector>
 
 #include "src/fastertransformer/layers/DynamicDecodeLayer.h"
+#include "src/fastertransformer/layers/logits_layers/DynamicLogitsLayer.h"
+
 #include "src/fastertransformer/models/multi_gpu_gpt/ParallelGptContextDecoder.h"
 #include "src/fastertransformer/models/multi_gpu_gpt/ParallelGptDecoder.h"
 #include "src/fastertransformer/models/multi_gpu_gpt/ParallelGptWeight.h"
@@ -85,6 +87,7 @@ private:
     ParallelGptDecoder<T>*        gpt_decoder_;
     ParallelGptContextDecoder<T>* gpt_context_decoder_;
     DynamicDecodeLayer<float>*    dynamic_decode_layer_;
+    DynamicLogitsLayer<T>*        dynamic_logits_layer_;
 
     void allocateBuffer() override;
     void allocateBuffer(size_t batch_size,

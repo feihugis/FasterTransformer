@@ -597,7 +597,7 @@ void invokeTopkBeamSearch(void*           workspace,
 {
     FT_LOG_DEBUG("%s", __PRETTY_FUNCTION__);
     // log_probs: (batch, beam, vocab) cumulative log_probs of beams ending with a token.
-    const int vocab_size = vocab_size_padded_;
+    const int vocab_size = vocab_size_padded_ / 1;
     // Beam size should be less than or equal to vocab size.
     assert(beam_width <= vocab_size);
     // Beam search needs the sequence lengths of beams to apply length penalty.

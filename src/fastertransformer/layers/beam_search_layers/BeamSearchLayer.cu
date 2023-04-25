@@ -209,6 +209,10 @@ void BeamSearchLayer<T>::invokeSoftMax(TensorMap* output_tensors, TensorMap* inp
         input_tensors->isExist("len_penalty") ? input_tensors->at("len_penalty").getVal<float>() : 0.0f;
 
     const int id_offset = step * batch_size * beam_width + ite * local_batch_size * beam_width;
+
+    int dynamic_vocab_padded_size = input_tensors->getVal<int>("dynamic_vocab_padded_size");
+    int dynamic_vocab_size        = input_tensors->getVal<int>("dynamic_vocab_size");
+
     invokeLogProbAddCumLogProb(float_log_prob_buf_,
                                input_tensors->at("logits").getPtr<T>(),
                                output_tensors->at("cum_log_probs").getPtr<float>(),
@@ -216,7 +220,7 @@ void BeamSearchLayer<T>::invokeSoftMax(TensorMap* output_tensors, TensorMap* inp
                                output_tensors->at("finished").getPtr<bool>(),
                                local_batch_size * beam_width,
                                beam_width,
-                               vocab_size_padded_,
+                               dynamic_vocab_padded_size, //vocab_size_padded_,
                                stream_);
     sync_check_cuda_error();
 

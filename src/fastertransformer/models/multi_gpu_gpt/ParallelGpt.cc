@@ -31,6 +31,8 @@ namespace fastertransformer {
 template<typename T>
 void ParallelGpt<T>::initialize()
 {
+    const bool IS_FP16   = std::is_same<T, half>::value;
+    FT_LOG_DEBUG("++++++ ParallelGpt<T>::initialize() IS_FP16: %d\n", IS_FP16);
     gpt_context_decoder_ = new ParallelGptContextDecoder<T>(0,
                                                             0,
                                                             head_num_,
@@ -84,6 +86,12 @@ void ParallelGpt<T>::initialize()
                                                           allocator_,
                                                           is_free_buffer_after_forward_,
                                                           cuda_device_prop_);
+    dynamic_logits_layer_ = new DynamicLogitsLayer<T>(vocab_size_,
+                                                      vocab_size_padded_,
+                                                      hidden_units_,
+                                                      cublas_wrapper_,
+                                                      allocator_,
+                                                      stream_);
 }
 
 template<typename T>
@@ -107,7 +115,7 @@ void ParallelGpt<T>::allocateBuffer(size_t batch_size,
 
     if (vocab_size_ != vocab_size_padded_) {
         padded_embedding_kernel_ =
-            (T*)(allocator_->reMalloc(padded_embedding_kernel_, sizeof(T) * hidden_units_ * vocab_size_padded_, true));
+            (T*)(allocator_->reMalloc(padded_embedding_kernel_, sizeof(T) * hidden_units_ * vocab_size_padded_ * (dynamic_logits_layer_->GetMaxGenLen() + 1), false));
         padded_embedding_kernel_ptr_ = padded_embedding_kernel_;
     }
 
@@ -194,6 +202,7 @@ void ParallelGpt<T>::allocateBuffer(size_t batch_size,
         (int*)allocator_->reMalloc(tiled_total_padding_count_, batchxbeam * sizeof(int), false);
 
     is_allocate_buffer_ = true;
+    // dynamic_logits_layer_->SetRawWeights(padded_embedding_kernel_ptr_);
 }
 
 template<typename T>
@@ -392,6 +401,7 @@ ParallelGpt<T>::~ParallelGpt()
     delete gpt_decoder_;
     delete gpt_context_decoder_;
     delete dynamic_decode_layer_;
+    delete dynamic_logits_layer_;
     freeBuffer();
 }
 
@@ -617,7 +627,6 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
     // complete this step.
     // When there is no input_ids, put the start token at step 0 of output_ids_buf_. After forward, only copy
     // the step 1 ~ max_output_seq_len of output_ids_buf_ to output_tensors->at(0).data
-
     FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
     FT_CHECK_WITH_INFO(input_tensors->size() >= 3, "input_tensors->size() >= 3");
     FT_CHECK_WITH_INFO(output_tensors->size() >= 2, "output_tensors->size() >= 2");
@@ -870,11 +879,12 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
         if (vocab_size_ == vocab_size_padded_) {
             padded_embedding_kernel_ptr_ = gpt_weights->post_decoder_embedding.kernel;
         }
-        else {
+        else if (!dynamic_logits_layer_->IsRawWeightsSet()){
             cudaAutoCpy(padded_embedding_kernel_,
                         gpt_weights->post_decoder_embedding.kernel,
                         vocab_size_ * hidden_units_,
                         stream_);
+            dynamic_logits_layer_->SetRawWeights(padded_embedding_kernel_);
             sync_check_cuda_error();
         }
         POP_RANGE;
@@ -1356,24 +1366,35 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
                     float alpha = 1.0f;
                     float beta  = 0.0f;
                     PUSH_RANGE("logits gemm");
-                    cublas_wrapper_->Gemm(CUBLAS_OP_T,
-                                          CUBLAS_OP_N,
-                                          vocab_size_padded_,  // n
-                                          local_batch_size * beam_width,
-                                          hidden_units_,  // k
-                                          &alpha,
-                                          padded_embedding_kernel_ptr_,
-                                          gemm_data_type,
-                                          hidden_units_,                                   // k
-                                          decoder_output_final_buf + hidden_units_offset,  // OPT: no final layer norm
-                                          gemm_data_type,
-                                          hidden_units_,  // k
-                                          &beta,
-                                          logits_buf_ + vocab_size_units_offset,
-                                          CUDA_R_32F,
-                                          vocab_size_padded_, /* n */
-                                          CUDA_R_32F,
-                                          cublasGemmAlgo_t(-1));
+                    // cublas_wrapper_->Gemm(CUBLAS_OP_T,
+                    //                       CUBLAS_OP_N,
+                    //                       vocab_size_padded_ / 1,  // n
+                    //                       local_batch_size * beam_width,
+                    //                       hidden_units_,  // k
+                    //                       &alpha,
+                    //                       padded_embedding_kernel_ptr_,
+                    //                       gemm_data_type,
+                    //                       hidden_units_,                                   // k
+                    //                       decoder_output_final_buf + hidden_units_offset,  // OPT: no final layer norm
+                    //                       gemm_data_type,
+                    //                       hidden_units_,  // k
+                    //                       &beta,
+                    //                       logits_buf_ + vocab_size_units_offset,
+                    //                       CUDA_R_32F,
+                    //                       vocab_size_padded_ / 1, /* n */
+                    //                       CUDA_R_32F,
+                    //                       cublasGemmAlgo_t(-1));
+
+                    auto decoder_output = decoder_output_final_buf + hidden_units_offset;
+                    auto logits = logits_buf_ + vocab_size_units_offset;
+                    dynamic_logits_layer_->forward(step_ - step_start,  decoder_output, logits, local_batch_size, beam_width);
+                    // std::vector<int> dynamic_vocab_indics;
+                    // dynamic_vocab_indics.reserve(vocab_size_padded_);
+                    // for (int i = 0; i < vocab_size_padded_; ++i) {
+                    //     dynamic_vocab_indics.push_back(i);
+                    // }
+                    // dynamic_logits_layer_->SetDynamicWeights(dynamic_vocab_indics);
+
                     POP_RANGE;
                 }
                 else {
@@ -1421,10 +1442,14 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
 
                 int  tmp_local_batch_size       = local_batch_size;
                 bool is_initialize_random_table = step_ == max_context_len;
+                int dynamic_vocab_size = dynamic_logits_layer_->GetDynamicVocabSize(step_ - step_start);
+                int dynamic_vocab_padded_size = dynamic_logits_layer_->GetDynamicVocabPaddedSize(step_ - step_start);
 
                 std::unordered_map<std::string, Tensor> dynamic_decode_input_tensors{
                     {"logits",
-                     Tensor{MEMORY_GPU, TYPE_FP32, {batch_size, beam_width, vocab_size_padded_}, logits_buf_}},
+                     Tensor{MEMORY_GPU, TYPE_FP32, {batch_size, beam_width, dynamic_vocab_padded_size}, logits_buf_}},
+                    {"dynamic_vocab_size", Tensor{MEMORY_CPU, TYPE_INT32, {1}, &dynamic_vocab_size}},
+                    {"dynamic_vocab_padded_size", Tensor{MEMORY_CPU, TYPE_INT32, {1}, &dynamic_vocab_padded_size}},
                     {"step", Tensor{MEMORY_CPU, TYPE_INT32, {1}, &step_}},
                     {"max_input_length", Tensor{MEMORY_CPU, TYPE_INT32, {1}, &max_context_len}},
                     {"sequence_limit_length", Tensor{MEMORY_GPU, TYPE_UINT32, {batch_size}, seq_limit_len_}},
@@ -1482,9 +1507,26 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
                     dynamic_decode_output_tensors.insert(*t);
                 }
 
+
+
                 PUSH_RANGE("result sampling and stop check");
                 dynamic_decode_layer_->forward(&dynamic_decode_output_tensors, &dynamic_decode_input_tensors);
                 *generation_should_stop_ &= subbatch_should_stop;
+                printf(">>>>>> before mapping at STEP= %d \n", step_ - step_start);
+                std::string output_ids_str = cudaarr2str(output_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                printf("\t output_ids_str: %s \n", output_ids_str.c_str());
+                std::string parent_ids_str = cudaarr2str(parent_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                printf("\t parent_ids_str: %s \n", parent_ids_str.c_str());
+
+                dynamic_logits_layer_->MapDynamicIds2RawIds(output_ids_buf_ + (step_) * batch_size * beam_width, step_ - step_start, batch_size * beam_width);
+                
+                printf("<<<<<< after mapping\n");
+                output_ids_str = cudaarr2str(output_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                printf("\t output_ids_str: %s \n", output_ids_str.c_str());
+                parent_ids_str = cudaarr2str(parent_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                printf("\t parent_ids_str: %s \n", parent_ids_str.c_str());
+
+
                 POP_RANGE;
             }
 

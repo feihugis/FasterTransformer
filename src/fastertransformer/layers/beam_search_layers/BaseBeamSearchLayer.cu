@@ -234,6 +234,11 @@ void BaseBeamSearchLayer<T>::forward(TensorMap* output_tensors, TensorMap* input
                                       input_tensors->getVal<float>("presence_penalty");
     }
 
+    int dynamic_vocab_padded_size = input_tensors->getVal<int>("dynamic_vocab_padded_size");
+    int dynamic_vocab_size        = input_tensors->getVal<int>("dynamic_vocab_size");
+
+    // printf("dynamic_vocab_padded_size: %d, dynamic_vocab_size: %d \n", dynamic_vocab_padded_size, dynamic_vocab_size);
+
     invokeAddBiasApplyPenalties(
         step,
         input_tensors->at("logits").getPtr<T>(),
@@ -249,8 +254,8 @@ void BaseBeamSearchLayer<T>::forward(TensorMap* output_tensors, TensorMap* input
         local_batch_size,
         batch_size,
         beam_width,
-        vocab_size_,
-        vocab_size_padded_,
+        dynamic_vocab_size, //vocab_size_,
+        dynamic_vocab_padded_size, //vocab_size_padded_,
         input_tensors->getPtr<const int>("end_id", nullptr),
         temperature,
         repetition_penalty,

@@ -141,6 +141,11 @@ void OnlineBeamSearchLayer<T>::invokeSoftMax(TensorMap* output_tensors, TensorMa
         beam_hyps.length_penalty       = length_penalty;
         beam_hyps.end_ids              = input_tensors->at("end_id").getPtr<int>();
     }
+    
+    size_t vocab_dim = input_tensors->at("logits").shape[2];
+    int dynamic_vocab_padded_size = input_tensors->getVal<int>("dynamic_vocab_padded_size");
+    int dynamic_vocab_size        = input_tensors->getVal<int>("dynamic_vocab_size");
+    FT_CHECK(vocab_dim == dynamic_vocab_padded_size);
 
     invokeTopkSoftMax(input_tensors->at("logits").getPtr<T>(),
                       (const T*)(nullptr),
@@ -154,7 +159,7 @@ void OnlineBeamSearchLayer<T>::invokeSoftMax(TensorMap* output_tensors, TensorMa
                       &beam_hyps,
                       local_batch_size,
                       beam_width,
-                      vocab_size_padded_,
+                      dynamic_vocab_padded_size,
                       input_tensors->at("end_id").getPtr<int>(),
                       diversity_rate,
                       length_penalty,
@@ -169,7 +174,7 @@ void OnlineBeamSearchLayer<T>::invokeSoftMax(TensorMap* output_tensors, TensorMa
                  &beam_hyps,
                  local_batch_size,
                  beam_width,
-                 vocab_size_padded_,
+                 dynamic_vocab_padded_size,
                  input_tensors->at("end_id").getPtr<const int>(),
                  stream_);
     sync_check_cuda_error();

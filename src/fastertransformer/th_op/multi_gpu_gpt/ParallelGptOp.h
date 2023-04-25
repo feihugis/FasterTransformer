@@ -255,6 +255,14 @@ public:
         ft::check_cuda_error(cudaGetDevice(&device_id));
         ft::check_cuda_error(cudaGetDeviceProperties(&prop_, device_id));
         FT_LOG_INFO("Device %s", prop_.name);
+
+        stream_                 = at::cuda::getCurrentCUDAStream().stream();
+        cublasHandle_ = at::cuda::getCurrentCUDABlasHandle();
+        cublasSetStream(cublasHandle_, stream_);
+        // allocator_      = ft::Allocator<ft::AllocatorType::TH>();
+        cublas_wrapper_ = new ft::cublasMMWrapper(
+            cublasHandle_, cublasltHandle_, stream_, cublas_algo_map_, cublas_wrapper_mutex_, &allocator_);
+
     }
 
     ~FTGpt() override
@@ -264,6 +272,7 @@ public:
         cublasLtDestroy(cublasltHandle_);
         delete cublas_algo_map_;
         delete cublas_wrapper_mutex_;
+        delete cublas_wrapper_;
     }
 
     void forward(th::Tensor&              input_ids,
@@ -286,23 +295,23 @@ public:
                  th::optional<int64_t>    return_cum_log_probs_opt) override
     {
         int  return_cum_log_probs   = return_cum_log_probs_opt.has_value() ? (int)return_cum_log_probs_opt.value() : 0;
-        auto stream                 = at::cuda::getCurrentCUDAStream().stream();
-        cublasHandle_t cublasHandle = at::cuda::getCurrentCUDABlasHandle();
-        cublasSetStream(cublasHandle, stream);
-        ft::Allocator<ft::AllocatorType::TH> allocator      = ft::Allocator<ft::AllocatorType::TH>();
-        ft::cublasMMWrapper                  cublas_wrapper = ft::cublasMMWrapper(
-            cublasHandle, cublasltHandle_, stream, cublas_algo_map_, cublas_wrapper_mutex_, &allocator);
+        // auto stream                 = at::cuda::getCurrentCUDAStream().stream();
+        // cublasHandle_t cublasHandle = at::cuda::getCurrentCUDABlasHandle();
+        // cublasSetStream(cublasHandle, stream);
+        // ft::Allocator<ft::AllocatorType::TH> allocator      = ft::Allocator<ft::AllocatorType::TH>();
+        // ft::cublasMMWrapper                  cublas_wrapper = ft::cublasMMWrapper(
+        //     cublasHandle, cublasltHandle_, stream, cublas_algo_map_, cublas_wrapper_mutex_, &allocator);
 
         if (std::is_same<T, half>::value) {
-            cublas_wrapper.setGemmConfig(CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F);
+            cublas_wrapper_->setGemmConfig(CUDA_R_16F, CUDA_R_16F, CUDA_R_16F, CUDA_R_32F);
         }
 #ifdef ENABLE_BF16
         else if (std::is_same<T, __nv_bfloat16>::value) {
-            cublas_wrapper.setBF16GemmConfig();
+            cublas_wrapper_->setBF16GemmConfig();
         }
 #endif
         else if (std::is_same<T, float>::value) {
-            cublas_wrapper.setFP32GemmConfig();
+            cublas_wrapper_->setFP32GemmConfig();
         }
 
         const size_t request_batch_size = (size_t)input_ids.size(0);
@@ -317,44 +326,46 @@ public:
                                     true,              // is_fuse
                                     false,             // with_relative_position_bias
                                     true);             // causal_mask
-
-        ft::ParallelGpt<T> gpt = ft::ParallelGpt<T>(request_batch_size,
-                                                    total_output_len,
-                                                    max_input_length,
-                                                    beam_width,
-                                                    head_num_,
-                                                    size_per_head_,
-                                                    inter_size_,
-                                                    layer_num_,
-                                                    expert_num_,
-                                                    moe_k_,
-                                                    moe_layer_index_,
-                                                    vocab_size_,
-                                                    start_id_,
-                                                    end_id_,
-                                                    end_id_ + 1,  // p/prompt tuning virtual token start id
-                                                    ft::PromptLearningType::no_prompt,
-                                                    gpt_variant_params_,
-                                                    0.0f,  // beam_search_diversity_rate,
-                                                    1,     // top_k,
-                                                    0.0,   // top_p,
-                                                    0,     // random_seed,
-                                                    1.0f,  // temperature,
-                                                    1.0f,  // len_penalty,
-                                                    1.0f,  // repetition_penalty,
-                                                    tensor_para_,
-                                                    pipeline_para_,
-                                                    stream,
-                                                    &cublas_wrapper,
-                                                    &allocator,
-                                                    false,
-                                                    &prop_,
-                                                    attention_type,
-                                                    false,
-                                                    int8_mode_,
-                                                    nullptr,
-                                                    0,
-                                                    shared_contexts_ratio_);
+        if (!is_gpt_initialized_) {
+          gpt_ = new ft::ParallelGpt<T>(request_batch_size,
+                                    total_output_len,
+                                    max_input_length,
+                                    beam_width,
+                                    head_num_,
+                                    size_per_head_,
+                                    inter_size_,
+                                    layer_num_,
+                                    expert_num_,
+                                    moe_k_,
+                                    moe_layer_index_,
+                                    vocab_size_,
+                                    start_id_,
+                                    end_id_,
+                                    end_id_ + 1,  // p/prompt tuning virtual token start id
+                                    ft::PromptLearningType::no_prompt,
+                                    gpt_variant_params_,
+                                    0.0f,  // beam_search_diversity_rate,
+                                    1,     // top_k,
+                                    0.0,   // top_p,
+                                    0,     // random_seed,
+                                    1.0f,  // temperature,
+                                    1.0f,  // len_penalty,
+                                    1.0f,  // repetition_penalty,
+                                    tensor_para_,
+                                    pipeline_para_,
+                                    stream_,
+                                    cublas_wrapper_,
+                                    &allocator_,
+                                    false,
+                                    &prop_,
+                                    attention_type,
+                                    false,
+                                    int8_mode_,
+                                    nullptr,
+                                    0,
+                                    shared_contexts_ratio_);
+          is_gpt_initialized_ = true;
+        }
 
         std::vector<uint32_t> output_seq_len(request_batch_size, total_output_len);
 
@@ -443,7 +454,7 @@ public:
         }
 
         try {
-            gpt.forward(&output_tensors, &input_tensors, &gpt_weights_);
+            gpt_->forward(&output_tensors, &input_tensors, &gpt_weights_);
         }
         catch (const std::runtime_error& error) {
             FT_LOG_ERROR(error.what());
@@ -493,6 +504,12 @@ private:
     ft::ParallelGptWeight<T> gpt_weights_;
     int                      world_size_ = 1;
     int                      rank_       = 0;
+    ft::ParallelGpt<T>*       gpt_ = nullptr;
+    bool                     is_gpt_initialized_ = false;
+    ft::Allocator<ft::AllocatorType::TH> allocator_ = ft::Allocator<ft::AllocatorType::TH>();
+    cudaStream_t            stream_;
+    cublasHandle_t cublasHandle_;
+    ft::cublasMMWrapper*                  cublas_wrapper_ = nullptr;
 };
 
 class ParallelGptOp: public th::jit::CustomClassHolder {

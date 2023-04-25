@@ -135,7 +135,7 @@ struct Tensor {
     template<typename T>
     inline T getVal(size_t index) const
     {
-        FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
+        // FT_LOG_DEBUG("%s start", __PRETTY_FUNCTION__);
         FT_CHECK(where == MEMORY_CPU);
         FT_CHECK(data != nullptr);
         FT_CHECK_WITH_INFO(index < size(), "index is larger than buffer size");

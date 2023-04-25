@@ -31,7 +31,7 @@ namespace fastertransformer {
 #define DO_SPLIT_SMALL_TOP_K_SOFTMAX
 static const int SMALL_TOP_K_SOFTMAX_THREADBLOCK_SIZE = 256;
 
-#define TOPK_FP16_STORAGE 0
+#define TOPK_FP16_STORAGE 1
 
 template<typename T>
 __device__ __forceinline__ T apply_length_penalty(T log_prob, int length, float length_penalty)
@@ -583,7 +583,7 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
     int voc_parts = 4;
     if (batch_size * beam_width < 256) {
         // Volta has 80 SMs, so we aim for three waves
-        // A100-MIG7 have 45 SMs
+        // A100-MIG7 have 15 SMs
         // TODO: make it more flexible
         voc_parts = (105/7*2 + batch_size * beam_width - 1) / (batch_size * beam_width);
         voc_parts = std::min(128, voc_parts);  // we implement up to 128

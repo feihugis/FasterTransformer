@@ -142,4 +142,21 @@ size_t cuda_datatype_size(FtCudaDataType dt);
 template<typename T>
 bool invokeCheckRange(T* buffer, const size_t size, T min, T max, bool* d_within_range, cudaStream_t stream);
 
+template<typename T>
+inline std::string cudaarr2str(T* arr, size_t size) {
+    std::vector<T> vec(size);
+    cudaD2Hcpy(vec.data(), arr, size);
+
+    std::stringstream ss;
+    ss << "(";
+    for (size_t i = 0; i < size - 1; ++i) {
+        ss << vec[i] << ", ";
+    }
+    if (size > 0) {
+        ss << vec[size - 1];
+    }
+    ss << ")";
+    return ss.str();
+}
+
 }  // namespace fastertransformer

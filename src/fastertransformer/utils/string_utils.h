@@ -81,4 +81,5 @@ inline std::string arr2str(T* arr, size_t size)
     ss << ")";
     return ss.str();
 }
+
 }  // namespace fastertransformer
