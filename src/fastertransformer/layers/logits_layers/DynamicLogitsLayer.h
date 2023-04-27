@@ -48,48 +48,7 @@ public:
                      int hidden_size,
                      cublasMMWrapper* cublas_wrapper,
                      IAllocator*      allocator,
-                     cudaStream_t     stream) {
-    // batch_size_ = batch_size;
-    // beam_size_ = beam_size;
-    vocab_size_ = vocab_size;
-    vocab_size_padded_  = vocab_size_padded;
-    hidden_size_ = hidden_size;
-    copy_stream_ = stream;
-    cublas_wrapper_ = cublas_wrapper;
-    allocator_ = allocator;
-
-    dynamic_vocab_size_ = vocab_size_padded;
-
-    Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/ads_data/result_v2/tokens_count.npy", MemoryType::MEMORY_CPU);
-    int max_step = token_count.shape[0];
-    int max_vocab = token_count.shape[1];
-    for (int i = 0; i < max_step; ++i) {
-      std::vector<int> indices;
-      std::unordered_map<int, int> indices_map;
-      for (int j = 0; j < max_vocab; ++j) {
-        int token_freq = token_count.getVal<int>(i * max_vocab + j);
-        if (token_freq == 0) {
-          // indices.push_back(j);
-          // indices.push_back(-1);
-          continue;
-        }
-        if (token_freq > 0) {
-
-          indices.push_back(j);
-        }
-      }
-      dynamic_vocab_indices_.push_back(indices);
-    }
-    // Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/ads_data/test.npy", MemoryType::MEMORY_CPU);
-    // Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/tests/data/gpt_context_decoder_inputs/GPU-batch_to_compact_idx.npy", MemoryType::MEMORY_CPU);
-    printf("token_count: %s", token_count.toString().c_str());
-
-    for (auto& indices : dynamic_vocab_indices_) {
-      auto gpu_indices = (int*)allocator_->malloc(indices.size() * sizeof(int), true/*is_set_zero*/, false/*is_host*/);
-      cudaH2Dcpy(gpu_indices, indices.data(), indices.size());
-      gpu_dynamic_2_raw_vocab_indices_.push_back(gpu_indices);
-    }
-  }
+                     cudaStream_t     stream);
 
   void MapDynamicIds2RawIds(int* gpu_dynamic_ids, int step, int number_of_ids);
 

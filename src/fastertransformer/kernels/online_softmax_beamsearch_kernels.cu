@@ -25,6 +25,8 @@
 #include "src/fastertransformer/kernels/online_softmax_beamsearch_kernels.h"
 #include "src/fastertransformer/kernels/reduce_kernel_utils.cuh"
 #include "src/fastertransformer/utils/cuda_utils.h"
+#include "src/fastertransformer/utils/memory_utils.h"
+
 
 namespace fastertransformer {
 
@@ -97,16 +99,16 @@ __launch_bounds__(THREADBLOCK_SIZE) __global__ void batch_topK_kernel(const int*
 }
 
 template<typename T, int MAX_K, int THREADBLOCK_SIZE>
-__launch_bounds__(THREADBLOCK_SIZE) __global__ void batch_topk_kernel(const int* __restrict x,
-                                                                      const T* __restrict y,
-                                                                      int* __restrict z,
-                                                                      float* __restrict v,
-                                                                      float*         output_log_probs,
+__launch_bounds__(THREADBLOCK_SIZE) __global__ void batch_topk_kernel(const int* __restrict x, // topk_tmp_id_buf,
+                                                                      const T* __restrict y,   // topk_tmp_val_buf
+                                                                      int* __restrict z,       // ids
+                                                                      float* __restrict v,     // cum_log_probs
+                                                                      float*         output_log_probs, // output_log_probs
                                                                       const bool*    finished,
                                                                       const int*     sequence_lengths,
                                                                       BeamHypotheses beam_hyps,
-                                                                      const int      V,
-                                                                      const int      K,
+                                                                      const int      V,  // beam_width * beam_width * 2
+                                                                      const int      K, // beam_width
                                                                       const int      vocab_size,
                                                                       const float    length_penalty,
                                                                       const T        diversity_rate)
@@ -365,12 +367,12 @@ __launch_bounds__(THREADBLOCK_SIZE) __global__ void beam_online_softmax_topk_ker
 
 template<typename T, int ITEMS_PER_THREAD, int MAX_K, int THREADBLOCK_SIZE>
 __launch_bounds__(THREADBLOCK_SIZE, 1) __global__
-    void beam_online_softmax_topk_stage1_kernel(const T* __restrict x,
-                                                const T* __restrict b,
+    void beam_online_softmax_topk_stage1_kernel(const T* __restrict x, // log_probs
+                                                const T* __restrict b, // bias
                                                 const bool* __restrict finished,
-                                                float* __restrict t,
-                                                int V,
-                                                int K,
+                                                float* __restrict t, // tmp_buffer
+                                                int V,  // vocab_size
+                                                int K,  // beam_width
                                                 const int* __restrict end_ids)
 {
     int thread_id = threadIdx.x;
@@ -450,6 +452,7 @@ __launch_bounds__(THREADBLOCK_SIZE, 1) __global__
     }
 }
 
+// temp_storage, cum_log_probs, ids, vals, beam_width, parts_per_beam
 template<typename T, int MAX_K, int THREADBLOCK_SIZE>
 __launch_bounds__(THREADBLOCK_SIZE) __global__ void beam_online_softmax_topk_stage2_kernel(
     const float* __restrict x, const float* __restrict c, int* __restrict z, T* __restrict v, int K, int parts_per_beam)
@@ -594,6 +597,9 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
                          cudaSharedmemCarveoutMaxL1);
     beam_online_softmax_topk_stage1_kernel<T, items_per_thread, 2 * MAX_K, block_sz>
         <<<grid, block_sz, 0, stream>>>(log_probs, bias, finished, tmp_buffer, vocab_size, beam_width, end_ids);
+    // std::string ids_str = cudaarr2str(reinterpret_cast<int*>(tmp_buffer), 2*MAX_K);
+    // std::string probs_str = cudaarr2str(reinterpret_cast<float*>(tmp_buffer) + 2*MAX_K, 2*MAX_K);
+    // printf("ids=%s \nprobs=%s\n", ids_str.c_str(), probs_str.c_str());
     sync_check_cuda_error();
 #endif
     if (beam_width > 1) {

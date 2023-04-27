@@ -526,7 +526,7 @@ class GPT(nn.Module):
         except:
             print("[INFO] WARNING: Have initialized the process group")
         self.rank = dist.get_rank()
-        self.device_count = torch.cuda.device_count()
+        self.device_count = 1 #torch.cuda.device_count()
         self.device = self.rank % self.device_count
         torch.cuda.set_device(self.device)
 

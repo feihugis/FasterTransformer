@@ -159,4 +159,21 @@ inline std::string cudaarr2str(T* arr, size_t size) {
     return ss.str();
 }
 
+template<typename T>
+inline std::string cudaarr2str(T* arr, size_t size, const std::vector<int>& indices) {
+    std::vector<T> vec(size);
+    cudaD2Hcpy(vec.data(), arr, size);
+
+    std::stringstream ss;
+    ss << "(";
+    for (size_t i = 0; i < size - 1; ++i) {
+        ss << indices[i] << ":" << vec[i] << ", ";
+    }
+    if (size > 0) {
+        ss << indices[size - 1] << ":" << vec[size - 1];
+    }
+    ss << ")";
+    return ss.str();
+}
+
 }  // namespace fastertransformer

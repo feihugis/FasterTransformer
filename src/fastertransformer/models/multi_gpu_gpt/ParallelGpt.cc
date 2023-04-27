@@ -1512,19 +1512,19 @@ void ParallelGpt<T>::forward(std::unordered_map<std::string, Tensor>*       outp
                 PUSH_RANGE("result sampling and stop check");
                 dynamic_decode_layer_->forward(&dynamic_decode_output_tensors, &dynamic_decode_input_tensors);
                 *generation_should_stop_ &= subbatch_should_stop;
-                printf(">>>>>> before mapping at STEP= %d \n", step_ - step_start);
-                std::string output_ids_str = cudaarr2str(output_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
-                printf("\t output_ids_str: %s \n", output_ids_str.c_str());
-                std::string parent_ids_str = cudaarr2str(parent_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
-                printf("\t parent_ids_str: %s \n", parent_ids_str.c_str());
+                // printf(">>>>>> before mapping at STEP= %d \n", step_ - step_start);
+                // std::string output_ids_str = cudaarr2str(output_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                // printf("\t output_ids_str: %s \n", output_ids_str.c_str());
+                // std::string parent_ids_str = cudaarr2str(parent_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                // printf("\t parent_ids_str: %s \n", parent_ids_str.c_str());
 
                 dynamic_logits_layer_->MapDynamicIds2RawIds(output_ids_buf_ + (step_) * batch_size * beam_width, step_ - step_start, batch_size * beam_width);
                 
-                printf("<<<<<< after mapping\n");
-                output_ids_str = cudaarr2str(output_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
-                printf("\t output_ids_str: %s \n", output_ids_str.c_str());
-                parent_ids_str = cudaarr2str(parent_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
-                printf("\t parent_ids_str: %s \n", parent_ids_str.c_str());
+                // printf("<<<<<< after mapping\n");
+                // output_ids_str = cudaarr2str(output_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                // printf("\t output_ids_str: %s \n", output_ids_str.c_str());
+                // parent_ids_str = cudaarr2str(parent_ids_buf_ + (step_) * batch_size * beam_width, beam_width);
+                // printf("\t parent_ids_str: %s \n", parent_ids_str.c_str());
 
 
                 POP_RANGE;

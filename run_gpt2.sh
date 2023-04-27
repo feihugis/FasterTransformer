@@ -35,7 +35,7 @@ python3 examples/pytorch/gpt/gpt_summarization.py \
 
 python examples/pytorch/gpt/multi_gpu_gpt_example.py \
             --data_type fp16 \
-            --lib_path ./build/lib/libth_transformer.so \
+            --lib_path ./build_release/lib/libth_transformer.so \
             --ckpt_path ./models/345m/c-model/1-gpu/ \
             --vocab_file ./gpt2-xl/vocab.json \
             --merges_file ./gpt2-xl/merges.txt \

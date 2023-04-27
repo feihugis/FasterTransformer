@@ -47,6 +47,13 @@ __global__ void update_kernel(bool*          finished,
         parent_ids[index]      = beam_id;
         word_ids[index]        = word_id;
         output_ids[index]      = word_id;
+        // printf("index: %d, batch_id: %d, parent_ids: %d, word_id: %d, sequence_length: %d, end_ids: %d\n",
+        //        index,
+        //        batch_id,
+        //        parent_ids[index],
+        //        word_id,
+        //        sequence_length[index],
+        //        end_ids[index / beam_width]);
 
         if (beam_hyps.num_beams != nullptr) {
             if (beam_hyps.num_beams[beam_hyps.ite * beam_hyps.local_batch_size + batch_id] == beam_width) {
