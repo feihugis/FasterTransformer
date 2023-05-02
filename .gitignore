@@ -17,3 +17,4 @@ __pycache__/
 /3rdparty/NeMo/
 /3rdparty/apex/
 *.nsys-rep
+ads_data
