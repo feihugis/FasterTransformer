@@ -26,6 +26,7 @@ private:
   int  hidden_size_;
   int  dynamic_vocab_size_;      // cpu
   std::vector<std::vector<int>> dynamic_vocab_indices_;  //cpu
+  std::vector<std::vector<bool>> token_neightbour_mask_; //cpu in the shape of [vocab_size, vocab_size]
   T*   weights_;   // [hidden_size, vocab_size] in row major on GPU
   // T*   logits_;   //  [batch_size, beam_size, vocab_size] in row major on GPU
   T*   dynamic_weights_;  //  [hidden_size, dynamic_vocab_size_] in row major on GPU

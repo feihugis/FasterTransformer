@@ -1,4 +1,5 @@
 #include "src/fastertransformer/layers/logits_layers/DynamicLogitsLayer.h"
+#include <cstdlib>
 
 namespace fastertransformer {
 
@@ -28,20 +29,27 @@ DynamicLogitsLayer<T>::DynamicLogitsLayer(int vocab_size,
 
     dynamic_vocab_size_ = vocab_size_padded;
 
-    Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/ads_data/result_v2/tokens_count_v2.npy", MemoryType::MEMORY_CPU);
+    // Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/ads_data/result_v2/tokens_count_v2.npy", MemoryType::MEMORY_CPU);
+    // Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/examples/pytorch/gpt/ads_data/bloom_fliter_raw_data/token_counts_1160136749_int32.npy", MemoryType::MEMORY_CPU);
+    std::string token_count_path = std::string(std::getenv("TOKEN_COUNT_PATH"));
+    printf("token_count_path: %s\n", token_count_path.c_str());
+    Tensor token_count = Tensor::loadNpy(token_count_path, MemoryType::MEMORY_CPU);
+
     int max_step = token_count.shape[0];
     int max_vocab = token_count.shape[1];
+    // max_step = max_gen_len_;
+    // max_vocab = vocab_size;
     for (int i = 0; i < max_step; ++i) {
       std::vector<int> indices;
       std::unordered_map<int, int> indices_map;
       for (int j = 0; j < max_vocab; ++j) {
         int token_freq = token_count.getVal<int>(i * max_vocab + j);
-        if (token_freq == 0) {
-          // indices.push_back(j);
-          // indices.push_back(-1);
-          continue;
-        }
-        if (token_freq > 0) {
+        // if (token_freq <= 0) {
+        //   // indices.push_back(j);
+        //   // indices.push_back(-1);
+        //   continue;
+        // }
+        if (token_freq > 1000 || j == 2) {
 
           indices.push_back(j);
         }
@@ -69,7 +77,7 @@ void DynamicLogitsLayer<T>::forward(int step, const T* decoder_outputs, float* l
     // POP_RANGE;
 
     PUSH_RANGE("dynamic logits gemm");
-    // printf("forward: step %d, vocab size: %d, dynamic weights ptr: %p \n", step, GetDynamicVocabSize(step), GetDynamicWeightsPtr(step));
+    // printf("forward: step %d, vocab size: %d, vocab padded size: %d, dynamic weights ptr: %p \n", step, GetDynamicVocabSize(step), GetDynamicVocabPaddedSize(step), GetDynamicWeightsPtr(step));
     cublas_wrapper_->Gemm(CUBLAS_OP_T,
                           CUBLAS_OP_N,
                           GetDynamicVocabPaddedSize(step),  // n
@@ -92,6 +100,8 @@ void DynamicLogitsLayer<T>::forward(int step, const T* decoder_outputs, float* l
     // cudaDeviceSynchronize();
     // std::string logits_probs = cudaarr2str(logits, GetDynamicVocabPaddedSize(step), dynamic_vocab_indices_[step]);
     // printf("step=%d, logits=%s\n", step, logits_probs.c_str());
+    // std::string wte_weight = cudaarr2str<half>(reinterpret_cast<half>(GetDynamicWeightsPtr(step)), 1024);
+    // printf("step=%d, wte_weight=%s\n", step, wte_weight.c_str());
 }
 
 template<typename T>
