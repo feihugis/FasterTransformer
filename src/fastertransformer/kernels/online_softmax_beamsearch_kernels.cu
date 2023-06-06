@@ -30,7 +30,7 @@
 
 namespace fastertransformer {
 
-#define DO_SPLIT_SMALL_TOP_K_SOFTMAX
+// #define DO_SPLIT_SMALL_TOP_K_SOFTMAX
 static const int SMALL_TOP_K_SOFTMAX_THREADBLOCK_SIZE = 256;
 
 #define TOPK_FP16_STORAGE 1
@@ -315,10 +315,19 @@ __launch_bounds__(THREADBLOCK_SIZE) __global__ void beam_online_softmax_topk_ker
     // reposition y to data for the current vector
     x += vector_id * V;
 
-    typedef cub::BlockReduce<TopKMD<float, MAX_K>, THREADBLOCK_SIZE> BlockReduce;
+#if TOPK_FP16_STORAGE == 1
+    typedef cub::BlockReduce<TopKMD<__half, MAX_K>, THREADBLOCK_SIZE> BlockReduce;
+#else
+    typedef cub::BlockReduce<TopKMD<T, MAX_K>, THREADBLOCK_SIZE> BlockReduce;
+#endif
     __shared__ typename BlockReduce::TempStorage                     temp_storage;
 
-    TopKMD<float, MAX_K> partial;
+#if TOPK_FP16_STORAGE == 1
+    TopKMD<__half, MAX_K> partial;
+#else
+    TopKMD<T, MAX_K>                                             partial;
+#endif
+
     bool                 finish = finished[vector_id];
     for (int i = 0; i < MAX_K; ++i) {
         partial.topk.p[i] = -1;
@@ -326,8 +335,8 @@ __launch_bounds__(THREADBLOCK_SIZE) __global__ void beam_online_softmax_topk_ker
     }
     partial.md.m = -MAX_T_VAL;
     partial.md.d = 0.0F;
-
     if (finish) {
+#pragma unroll 1
         for (int elem_id = thread_id; elem_id < V; elem_id += THREADBLOCK_SIZE) {
             float elem = (elem_id == end_ids[vector_id / K]) ? MAX_T_VAL : -MAX_T_VAL;
             MD    new_elem{elem, 1.0F};
@@ -337,16 +346,23 @@ __launch_bounds__(THREADBLOCK_SIZE) __global__ void beam_online_softmax_topk_ker
         }
     }
     else {
+#pragma unroll 1
         for (int elem_id = thread_id; elem_id < V; elem_id += THREADBLOCK_SIZE) {
-            float elem = x[elem_id] + b[elem_id];
+            T  bias = b == nullptr ? (T)0.0f : b[elem_id];  // gpt-2 does not use bias
+            float elem = x[elem_id] + bias;
             MD    new_elem{elem, 1.0F};
             partial.md = reduce_md_op(partial.md, new_elem);
             partial.topk.insert(elem, elem_id);
         }
     }
 
-    TopKMD<float, MAX_K> total = BlockReduce(temp_storage).Reduce(partial, reduce_topk_md_op<float, MAX_K>);
+    // TopKMD<float, MAX_K> total = BlockReduce(temp_storage).Reduce(partial, reduce_topk_md_op<float, MAX_K>);
 
+#if TOPK_FP16_STORAGE == 1
+    TopKMD<__half, MAX_K> total = BlockReduce(temp_storage).Reduce(partial, reduce_topk_md_op<__half, MAX_K>);
+#else
+    TopKMD<T, MAX_K> total = BlockReduce(temp_storage).Reduce(partial, reduce_topk_md_op<T, MAX_K>);
+#endif
     if (thread_id == 0) {
         z += vector_id * K;
         v += vector_id * K;
@@ -356,7 +372,7 @@ __launch_bounds__(THREADBLOCK_SIZE) __global__ void beam_online_softmax_topk_ker
         float d_total_log = logf(total.md.d);
         for (int i = 0; i < MAX_K; ++i) {
             // float val = __expf(total.topk.u[i] - total.md.m) * d_total_inverse;
-            float val = total.topk.u[i] - total.md.m - d_total_log;
+            float val = (float) total.topk.u[i] - total.md.m - d_total_log;
             if (i < K) {
                 z[i] = total.topk.p[i] + vector_id * V;  // faster transformer needs absolute id
                 v[i] = val + c[0];
@@ -439,7 +455,7 @@ __launch_bounds__(THREADBLOCK_SIZE, 1) __global__
 #endif
 
     if (thread_id == 0) {
-        for (int i = 0; i < 2 * K; i++) {
+        for (int i = 0; i < MAX_K; i++) {
             reinterpret_cast<int*>(buf_s)[i] = total.topk.p[i] + vector_id * V;  // faster transformer needs absolute id
             buf_s[MAX_K + i]                 = total.topk.u[i];
         }
@@ -582,43 +598,60 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
     T*        topk_tmp_val_buf = reinterpret_cast<T*>(topk_tmp_id_buf + topk_buf_offset);
     float*    tmp_buffer       = reinterpret_cast<float*>(topk_tmp_val_buf + topk_buf_offset);
 
-#ifdef DO_SPLIT_SMALL_TOP_K_SOFTMAX
-    int voc_parts = 4;
+    int voc_parts = 1;
     if (batch_size * beam_width < 256) {
         // Volta has 80 SMs, so we aim for three waves
         // A100-MIG7 have 15 SMs
         // TODO: make it more flexible
-        voc_parts = (105/7*2 + batch_size * beam_width - 1) / (batch_size * beam_width);
+        voc_parts = (105 / 7 * 2 + batch_size * beam_width - 1) / (batch_size * beam_width);
         voc_parts = std::min(128, voc_parts);  // we implement up to 128
     }
-    dim3 grid(batch_size * beam_width, voc_parts);
-    cudaFuncSetAttribute(beam_online_softmax_topk_stage1_kernel<T, items_per_thread, 2 * MAX_K, block_sz>,
-                         cudaFuncAttributePreferredSharedMemoryCarveout,
-                         cudaSharedmemCarveoutMaxL1);
-    beam_online_softmax_topk_stage1_kernel<T, items_per_thread, 2 * MAX_K, block_sz>
-        <<<grid, block_sz, 0, stream>>>(log_probs, bias, finished, tmp_buffer, vocab_size, beam_width, end_ids);
-    // std::string ids_str = cudaarr2str(reinterpret_cast<int*>(tmp_buffer), 2*MAX_K);
-    // std::string probs_str = cudaarr2str(reinterpret_cast<float*>(tmp_buffer) + 2*MAX_K, 2*MAX_K);
-    // printf("ids=%s \nprobs=%s\n", ids_str.c_str(), probs_str.c_str());
-    sync_check_cuda_error();
-#endif
-    if (beam_width > 1) {
-#ifdef DO_SPLIT_SMALL_TOP_K_SOFTMAX
-        beam_online_softmax_topk_stage2_kernelLauncher<T, 2 * MAX_K>(
-            tmp_buffer, cum_log_probs, topk_tmp_id_buf, topk_tmp_val_buf, batch_size, beam_width, voc_parts, stream);
+    if (voc_parts > 1) {
+        // TODO: factor can be 1 as well for this case. Need to implement it.
+        const int factor = 2;
+        dim3      grid(batch_size * beam_width, voc_parts);
+        cudaFuncSetAttribute(beam_online_softmax_topk_stage1_kernel<T, items_per_thread, factor * MAX_K, block_sz>,
+                             cudaFuncAttributePreferredSharedMemoryCarveout,
+                             cudaSharedmemCarveoutMaxL1);
+        beam_online_softmax_topk_stage1_kernel<T, items_per_thread, factor * MAX_K, block_sz>
+            <<<grid, block_sz, 0, stream>>>(log_probs, bias, finished, tmp_buffer, vocab_size, beam_width, end_ids);
+        // std::string ids_str = cudaarr2str(reinterpret_cast<int*>(tmp_buffer), factor * MAX_K * beam_width);
+        // std::string probs_str = cudaarr2str(reinterpret_cast<float*>(tmp_buffer) + factor * MAX_K * beam_width,
+        // factor * MAX_K * beam_width); printf("beam_online_softmax_topk_stage1_kernel ids=%s \nprobs=%s\n",
+        // ids_str.c_str(), probs_str.c_str());
         sync_check_cuda_error();
-#else
-        beam_online_softmax_topk_kernel<T, items_per_thread, MAX_K, block_sz>
-            <<<batch_size * beam_width, block_sz, 0, stream>>>(log_probs,
-                                                               bias,
-                                                               cum_log_probs,
-                                                               finished,
-                                                               topk_tmp_id_buf,
-                                                               topk_tmp_val_buf,
-                                                               vocab_size,
-                                                               beam_width,
-                                                               end_ids);
-#endif
+    }
+    if (beam_width > 1) {
+        if (voc_parts > 1) {
+            const int factor = 2;
+            beam_online_softmax_topk_stage2_kernelLauncher<T, factor * MAX_K>(tmp_buffer,
+                                                                              cum_log_probs,
+                                                                              topk_tmp_id_buf,
+                                                                              topk_tmp_val_buf,
+                                                                              batch_size,
+                                                                              beam_width,
+                                                                              voc_parts,
+                                                                              stream);
+            sync_check_cuda_error();
+        }
+        else {
+            const int factor = 1;
+            beam_online_softmax_topk_kernel<T, items_per_thread, factor * MAX_K, block_sz>
+                <<<batch_size * beam_width, block_sz, 0, stream>>>(log_probs,
+                                                                   bias,
+                                                                   cum_log_probs,
+                                                                   finished,
+                                                                   topk_tmp_id_buf,
+                                                                   topk_tmp_val_buf,
+                                                                   vocab_size ,
+                                                                   beam_width,
+                                                                   end_ids);
+            // std::string ids_str = cudaarr2str(reinterpret_cast<int*>(topk_tmp_id_buf), factor * MAX_K * beam_width);
+            // std::string probs_str = cudaarr2str(reinterpret_cast<float*>(topk_tmp_val_buf) + factor * MAX_K *
+            // beam_width, factor * MAX_K * beam_width); printf("beam_online_softmax_topk_stage2_kernel ids=%s
+            // \nprobs=%s\n", ids_str.c_str(), probs_str.c_str());
+        }
+
 #if 0
             // wrong result with diversity_rate != 0.f
             batch_topK_kernel<T, MAX_K, 32><<<batch_size, 32, 0, stream>>>
@@ -626,6 +659,7 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
 #else
         // We need 2*MAX_K candidates because at most k candidates are finished, and we
         // will not put them into next iteration
+        const int factor = voc_parts > 1 ? 2 : 1;
         batch_topk_kernel<T, MAX_K * 2, 32><<<batch_size, 32, 0, stream>>>(topk_tmp_id_buf,
                                                                            topk_tmp_val_buf,
                                                                            ids,
@@ -634,7 +668,7 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
                                                                            finished,
                                                                            sequence_lengths,
                                                                            *beam_hyps,
-                                                                           beam_width * beam_width * 2,
+                                                                           beam_width * beam_width * factor,
                                                                            beam_width,
                                                                            vocab_size,
                                                                            length_penalty,
@@ -644,14 +678,18 @@ void topK_softMax_kernelLauncher(const T*        log_probs,
     }
     else {
         FT_CHECK(false);
-#ifdef DO_SPLIT_SMALL_TOP_K_SOFTMAX
-        beam_online_softmax_topk_stage2_kernelLauncher<float, MAX_K>(
-            tmp_buffer, cum_log_probs, ids, cum_log_probs, batch_size, beam_width, voc_parts, stream);
-#else
-        beam_online_softmax_topk_kernel<T, items_per_thread, MAX_K, block_sz>
-            <<<batch_size * beam_width, block_sz, 0, stream>>>(
-                log_probs, bias, cum_log_probs, finished, ids, cum_log_probs, vocab_size, beam_width, end_ids);
-#endif
+        // #ifdef DO_SPLIT_SMALL_TOP_K_SOFTMAX
+        if (voc_parts > 1) {
+
+            beam_online_softmax_topk_stage2_kernelLauncher<float, MAX_K>(
+                tmp_buffer, cum_log_probs, ids, cum_log_probs, batch_size, beam_width, voc_parts, stream);
+        }
+        else {
+            // TODO: implement it
+            // beam_online_softmax_topk_kernel<T, items_per_thread, MAX_K, block_sz>
+            //     <<<batch_size * beam_width, block_sz, 0, stream>>>(
+            //         log_probs, bias, cum_log_probs, finished, ids, cum_log_probs, vocab_size, beam_width, end_ids);
+        }
     }
 }
 

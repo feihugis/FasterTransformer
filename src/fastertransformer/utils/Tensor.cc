@@ -248,7 +248,7 @@ DataType Tensor::typeFromNumpyDesc(std::string type)
                                                                     {"i1", TYPE_INT8},
                                                                     {"i2", TYPE_INT16},
                                                                     {"<i4", TYPE_INT32},
-                                                                    {"i8", TYPE_INT64},
+                                                                    {"<i8", TYPE_INT64},
                                                                     {"f2", TYPE_FP16},
                                                                     {"f4", TYPE_FP32},
                                                                     {"f8", TYPE_FP64}};
