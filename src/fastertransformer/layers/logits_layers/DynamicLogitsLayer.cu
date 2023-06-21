@@ -35,6 +35,15 @@ DynamicLogitsLayer<T>::DynamicLogitsLayer(int vocab_size,
     printf("token_count_path: %s\n", token_count_path.c_str());
     Tensor token_count = Tensor::loadNpy(token_count_path, MemoryType::MEMORY_CPU);
 
+    // Tensor token_neightbour_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/examples/pytorch/gpt/ads_data/bloom_fliter_raw_data/token_counts_1160136749_int32.npy", MemoryType::MEMORY_CPU);
+    // std::string token_neightbour_count_path = std::string(std::getenv("TOKEN_NEIGHTBOUR_COUNT_PATH"));
+    // printf("token_neightbour_count_path: %s\n", token_neightbour_count_path.c_str());
+    // Tensor token_neightbour_count = Tensor::loadNpy(token_neightbour_count_path, MemoryType::MEMORY_CPU);
+    // printf("token_count: %s", token_count.toString().c_str());
+
+    int token_count_threshold = std::stoi(std::getenv("TOKEN_COUNT_THRESHOLD"));
+    printf("token_count_threshold: %d\n", token_count_threshold);
+
     int max_step = token_count.shape[0];
     int max_vocab = token_count.shape[1];
     // max_step = max_gen_len_;
@@ -49,12 +58,16 @@ DynamicLogitsLayer<T>::DynamicLogitsLayer(int vocab_size,
         //   // indices.push_back(-1);
         //   continue;
         // }
-        if (token_freq > 1000 || j == 2) {
-
+        if (token_freq > token_count_threshold || j == 2) {
           indices.push_back(j);
         }
+
+        // if (indices.size() > 6000) {
+        //   break;
+        // }
       }
       dynamic_vocab_indices_.push_back(indices);
+      printf("step %d, dynamic vocab size: %d\n", i, indices.size());
     }
     // Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/ads_data/test.npy", MemoryType::MEMORY_CPU);
     // Tensor token_count = Tensor::loadNpy("/dd/fhu/github/FasterTransformer/tests/data/gpt_context_decoder_inputs/GPU-batch_to_compact_idx.npy", MemoryType::MEMORY_CPU);
