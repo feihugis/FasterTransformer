@@ -20,7 +20,7 @@ export FT_NVTX=ON
 export CUDA_VISIBLE_DEVICES=MIG-73ea7899-43fa-5c14-98d1-67eea628afd0
 python examples/pytorch/gpt/multi_gpu_gpt_example.py \
             --data_type fp16 \
-            --lib_path ./build_release/lib/libth_transformer.so \
+            --lib_path ./build_mig/lib/libth_transformer.so \
             --ckpt_path ./models/onnx-models/c-model/124m/1-gpu/ \
             --vocab_file ./gpt2/vocab.json \
             --merges_file ./gpt2/merges.txt \
@@ -35,8 +35,6 @@ python examples/pytorch/gpt/multi_gpu_gpt_example.py \
             --head_num 12 \
             --layer_num 12 \
             --vocab_size 50257
-
-# [INFO] GPT time costs: 11.991 ms
 
 
 
