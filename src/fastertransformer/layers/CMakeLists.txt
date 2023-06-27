@@ -72,3 +72,5 @@ set_property(TARGET TensorParallelSiluFfnLayer PROPERTY CUDA_RESOLVE_DEVICE_SYMB
 target_link_libraries(TensorParallelSiluFfnLayer PUBLIC -lcudart FfnLayer nccl_utils nvtx_utils)
 
 add_subdirectory(adapter_layers)
+
+add_subdirectory(logits_layers)

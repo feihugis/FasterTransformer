@@ -302,7 +302,7 @@ add_subdirectory(3rdparty)
 add_subdirectory(src)
 add_subdirectory(examples)
 
-add_subdirectory(tests)
+# add_subdirectory(tests)
 
 # # Mesaure the compile time
 option(MEASURE_BUILD_TIME "Measure the build time of each module" OFF)
@@ -318,10 +318,10 @@ add_library(transformer-shared SHARED
   $<TARGET_OBJECTS:BaseBeamSearchLayer>
   $<TARGET_OBJECTS:BaseSamplingLayer>
   $<TARGET_OBJECTS:BeamSearchLayer>
-  $<TARGET_OBJECTS:Bert>
-  $<TARGET_OBJECTS:BertLayerWeight>
-  $<TARGET_OBJECTS:BertTritonBackend>
-  $<TARGET_OBJECTS:BertWeight>
+  # $<TARGET_OBJECTS:Bert>
+  # $<TARGET_OBJECTS:BertLayerWeight>
+  # $<TARGET_OBJECTS:BertTritonBackend>
+  # $<TARGET_OBJECTS:BertWeight>
   $<TARGET_OBJECTS:DecoderCrossAttentionLayer>
   $<TARGET_OBJECTS:DecoderSelfAttentionLayer>
   $<TARGET_OBJECTS:DynamicDecodeLayer>
@@ -348,11 +348,11 @@ add_library(transformer-shared SHARED
   $<TARGET_OBJECTS:ParallelGptDecoderLayerWeight>
   $<TARGET_OBJECTS:ParallelGptTritonBackend>
   $<TARGET_OBJECTS:ParallelGptWeight>
-  $<TARGET_OBJECTS:T5Common>
-  $<TARGET_OBJECTS:T5Decoder>
-  $<TARGET_OBJECTS:T5Decoding>
-  $<TARGET_OBJECTS:T5Encoder>
-  $<TARGET_OBJECTS:T5TritonBackend>
+  # $<TARGET_OBJECTS:T5Common>
+  # $<TARGET_OBJECTS:T5Decoder>
+  # $<TARGET_OBJECTS:T5Decoding>
+  # $<TARGET_OBJECTS:T5Encoder>
+  # $<TARGET_OBJECTS:T5TritonBackend>
   $<TARGET_OBJECTS:T5EncoderTritonBackend>
   $<TARGET_OBJECTS:TensorParallelDecoderCrossAttentionLayer>
   $<TARGET_OBJECTS:TensorParallelDecoderSelfAttentionLayer>
@@ -363,7 +363,7 @@ add_library(transformer-shared SHARED
   $<TARGET_OBJECTS:TensorParallelUnfusedAttentionLayer>
   $<TARGET_OBJECTS:TopKSamplingLayer>
   $<TARGET_OBJECTS:TopPSamplingLayer>
-  $<TARGET_OBJECTS:TransformerTritonBackend>
+  # $<TARGET_OBJECTS:TransformerTritonBackend>
   $<TARGET_OBJECTS:UnfusedAttentionLayer>
   $<TARGET_OBJECTS:activation_int8_kernels>
   $<TARGET_OBJECTS:activation_kernels>

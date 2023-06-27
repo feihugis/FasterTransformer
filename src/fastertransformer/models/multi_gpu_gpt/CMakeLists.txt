@@ -44,7 +44,7 @@ set_property(TARGET ParallelGpt PROPERTY POSITION_INDEPENDENT_CODE  ON)
 set_property(TARGET ParallelGpt PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS  ON)
 target_link_libraries(ParallelGpt PUBLIC -lcudart ParallelGptDecoder ParallelGptContextDecoder decoding_kernels gpt_kernels
                       DynamicDecodeLayer BaseBeamSearchLayer bert_preprocess_kernels gen_relative_pos_bias ParallelGptWeight
-                      custom_ar_comm logprob_kernels cuda_utils logger nvtx_utils)
+                      custom_ar_comm logprob_kernels cuda_utils logger nvtx_utils DynamicLogitsLayer)
 
 add_executable(gpt_gemm gpt_gemm.cc)
 target_link_libraries(gpt_gemm PUBLIC -lcudart gpt_gemm_func memory_utils cuda_utils logger)
