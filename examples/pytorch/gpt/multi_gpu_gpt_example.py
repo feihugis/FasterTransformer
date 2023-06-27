@@ -23,6 +23,11 @@ import timeit
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
+os.environ["TOKEN_COUNT_PATH"] = "/dd/fhu/github/FasterTransformer/examples/pytorch/gpt/ads_data/bloom_fliter_raw_data/token_counts_1160136749_int32.npy"
+# TODO: there are some issues to load the real data: /dd/fhu/github/FasterTransformer/examples/pytorch/gpt/ads_data/bloom_fliter_raw_data/token_neighbors_160000000_int32.npy
+os.environ["TOKEN_NEIGHTBOUR_COUNT_PATH"] = "/dd/fhu/github/FasterTransformer/examples/pytorch/gpt/ads_data/bloom_fliter_raw_data/token_counts_1160136749_int32.npy"
+os.environ["TOKEN_COUNT_THRESHOLD"] = "6000"
+
 dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(dir_path, "../../.."))
 import examples.pytorch.gpt.utils.gpt_token_encoder as encoder
@@ -336,9 +341,24 @@ def main():
 
         outputs = []
         tokens_batch = tokens_batch.cpu().numpy()
+        print(f"[INFO] generated tokens: {tokens_batch[:, :, start_lengths[0]:]}")
+        # import numpy as np
+        # dynamic_tokens = np.load('/dd/fhu/github/FasterTransformer/ads_data/result_v2/tokens_count.npy')
+        # gen_steps, voc_size = dynamic_tokens.shape
+        # print(gen_steps, voc_size)
+        # dynamic_tokens_map = np.ones([gen_steps, voc_size], dtype=np.int32) * -1
+        # for step in range(gen_steps):
+        #     j = 0
+        #     for id in range(voc_size):
+        #         if dynamic_tokens[step][id] > 0:
+        #             dynamic_tokens_map[step][j] = id
+        #             j += 1
         for i, (context, tokens) in enumerate(zip(contexts, tokens_batch)):
             for beam_id in range(beam_width):
                 token = tokens[beam_id][start_lengths[i]:]  # exclude context input from the output
+                print(f"[INFO] dynamic tokens: {token}")
+                # token = [ dynamic_tokens_map[i][t] for i, t in enumerate(token)]
+                print(f"[INFO] mapback tokens: {token}")
                 if args.skip_end_tokens:
                     token = token[token != end_id]
                 output = enc.decode(token) if args.detokenize else ' '.join(str(t) for t in token.tolist())
@@ -358,7 +378,6 @@ def main():
         start = timeit.default_timer()
         for _ in range(iterations):
             torch.cuda.nvtx.range_push("gpt_generate")
-            print(start_ids)
             gpt_generate_fn()
             torch.cuda.nvtx.range_pop()
         time_elapsed = timeit.default_timer() - start
